@@ -1,2 +1,7 @@
 torch
-numpy 
+numpy
+pixell
+matplotlib
+seaborn
+versioneer 
+pandas

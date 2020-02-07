@@ -40,7 +40,7 @@ setup(
     license="Apache LICENSE-2.0",
     keywords='Cosmimikyu',
     name='Cosmimikyu',
-    packages=['Cosmimikyu'],
+    packages=['cosmimikyu'],
     include_package_data=True,
     package_data={'cosmimikyu': ['data/*']},
     url='https://github.com/dwhan89/cosmimikyu',

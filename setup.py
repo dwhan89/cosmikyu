@@ -30,8 +30,7 @@ setup(
         'Programming Language :: Python :: 3.5',
         'Programming Language :: Python :: 3.6',
     ],
-    description="gan",
-    package_dir={"crush": "gan"},
+    description="Cosmimikyu",
     install_requires=["torch",
                       "numpy >= 1.10",
                       "pixell",
@@ -39,12 +38,12 @@ setup(
                       "mpi4py",
                       "pandas"],
     license="Apache LICENSE-2.0",
-    keywords='gan',
-    name='GAN',
-    packages=['gan'],
+    keywords='Cosmimikyu',
+    name='Cosmimikyu',
+    packages=['Cosmimikyu'],
     include_package_data=True,
-    package_data={'gan': ['data/*']},
-    url='https://github.com/dwhan89/gan',
+    package_data={'cosmimikyu': ['data/*']},
+    url='https://github.com/dwhan89/cosmimikyu',
 )
 
 print('\n[setup.py request was successful.]')

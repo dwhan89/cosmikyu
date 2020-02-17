@@ -6,3 +6,4 @@ seaborn
 versioneer 
 pandas
 torchvision
+visdom

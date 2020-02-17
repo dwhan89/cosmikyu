@@ -27,7 +27,7 @@ class WGAN_Generator(nn.Module):
             return layers
 
         self.model = nn.Sequential(
-            *custom_layer(latent_dim, 128, batch_normalize=False),
+            *custom_layer(self.latent_dim, 128, batch_normalize=False),
             *custom_layer(128, 256),
             *custom_layer(256, 512),
             *custom_layer(512, 1024),
@@ -41,9 +41,10 @@ class WGAN_Generator(nn.Module):
         return img
 
 class WGAN_Discriminator(nn.Module):
-    def __init__(self):
+    def __init__(self, shape):
         super(WGAN_Discriminator, self).__init__()
-
+        self.shape = shape
+        
         self.model = nn.Sequential(
             nn.Linear(int(np.prod(self.shape)), 512),
             nn.LeakyReLU(0.2, inplace=True),

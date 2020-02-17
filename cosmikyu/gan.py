@@ -25,8 +25,8 @@ class WGAN(object):
         self.output_path = output_path
         self.sample_path = sample_path
 
-        os.makedirs(self.output_path)
-        os.makedirs(self.sample_path)
+        os.makedirs(self.output_path, exist_ok=True)
+        os.makedirs(self.sample_path, exist_ok=True)
 
         if torch.cuda.is_available() and not self.cuda:
             print("[WARNING] You have a CUDA device. You probably want to run with CUDA enabled")
@@ -54,7 +54,7 @@ class WGAN(object):
         torch.save(self.discriminator.state_dict(), discriminator_state_file)
 
     def train(self, dataloader, lr=0.00005, nepochs=200, clip_tresh=0.01, num_critic=5, sample_interval=1000,
-              save_interval=50000, load_states=True, save_states=True, verbose=True):
+              save_interval=50000, load_states=True, save_states=True, verbose=True, visdom_plotter=None):
 
         if load_states:
             self.load_states()
@@ -63,7 +63,10 @@ class WGAN(object):
         opt_disc = torch.optim.RMSprop(self.discriminator.parameters(), lr=lr)
         Tensor = torch.cuda.FloatTensor if self.cuda else torch.FloatTensor
 
+
+
         batches_done = 0
+
         for epoch in range(nepochs):
             for i, (imgs, _) in enumerate(dataloader):
                 real_imgs = Variable(imgs.type(Tensor))
@@ -98,7 +101,7 @@ class WGAN(object):
 
                     if verbose:
                         print("[Epoch %d/%d] [Batch %d/%d] [D loss: %f] [G loss: %f]"
-                            % (epoch, nepochs, batches_done % len(dataloader), len(dataloader), loss_D.item(), loss_G.item())
+                            % (epoch, nepochs, batches_done % len(dataloader), len(dataloader), -1*loss_D.item(), -1*loss_G.item())
                         )
 
                 if batches_done % sample_interval == 0:
@@ -107,6 +110,9 @@ class WGAN(object):
                     self.save_states()
                 batches_done += 1
 
+                if visdom_plotter is not None:
+                    visdom_plotter.plot("D loss", 'D loss', np.array([batches_done]), np.array([-1*loss_D.item()]), xlabel='batches_done')
+                    visdom_plotter.plot("G loss", 'G_loss', np.array([batches_done]), np.array([-1*loss_G.item()]), xlabel='batches_done')
         if save_states:
             self.save_states()
 

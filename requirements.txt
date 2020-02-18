@@ -7,3 +7,5 @@ versioneer
 pandas
 torchvision
 visdom
+healpy
+pixell

@@ -54,7 +54,7 @@ class WGAN(object):
         torch.save(self.discriminator.state_dict(), discriminator_state_file)
 
     def train(self, dataloader, lr=0.00005, nepochs=200, clip_tresh=0.01, num_critic=5, sample_interval=1000,
-              save_interval=50000, load_states=True, save_states=True, verbose=True, visdom_plotter=None):
+              save_interval=10000, load_states=True, save_states=True, verbose=True, visdom_plotter=None):
 
         if load_states:
             self.load_states()

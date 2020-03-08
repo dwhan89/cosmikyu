@@ -11,8 +11,9 @@ C_light = 2.99792e+10
 
 def rand_geometry(width, height, res=None, shape=None, seed=None):
     np.random.seed(seed)
-    ypos = np.random.uniform(-1*np.pi/2., np.pi/2.)
+    ypos = np.random.uniform(-1*np.pi/2, np.pi/2)
     xpos = np.random.uniform(-1*np.pi, np.pi)
+    #print(ypos, xpos)
     return get_geometry(xpos, ypos, width, height, res=res, shape=shape)
     
 

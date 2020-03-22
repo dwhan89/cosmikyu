@@ -4,6 +4,7 @@ import os
 from past.utils import old_div
 from pixell import enmap
 
+
 default_tcmb = 2.726
 H_CGS = 6.62608e-27
 K_CGS = 1.3806488e-16
@@ -11,19 +12,18 @@ C_light = 2.99792e+10
 
 def rand_geometry(width, height, res=None, shape=None, seed=None):
     np.random.seed(seed)
-    ypos = np.random.uniform(-1*np.pi/2, np.pi/2)
-    xpos = np.random.uniform(-1*np.pi, np.pi)
-    #print(ypos, xpos)
-    return get_geometry(xpos, ypos, width, height, res=res, shape=shape)
+    dec = np.random.uniform(-1*np.pi/2, np.pi/2)
+    ra = np.random.uniform(-1*np.pi, np.pi)
+    return get_geometry(ra, dec, width, height, res=res, shape=shape)
     
 
-def get_geometry(xpos, ypos, width, height, res=None, shape=None):
+def get_geometry(ra, dec, width, height, res=None, shape=None):
     if shape is None:
         nx = int(np.ceil(width/res))
         ny = int(np.ceil(height/res))
         shape = (ny, nx)
     else:pass
-    pos = [[-1.*height/2.+ypos, -1.*width/2.+xpos], [height/2.+ypos, width/2.+xpos]]
+    pos = [[-1.*height/2.+dec, -1.*width/2.+ra], [height/2.+dec, width/2.+ra]]
     shape, wcs = enmap.geometry(pos=pos, shape=shape)
     return (shape, wcs, pos)
     

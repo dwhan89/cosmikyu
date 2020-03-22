@@ -1,3 +1,24 @@
+def create_dict(*idxes):
+    '''
+        create nested dictionary with the given idxes
+    '''
+
+    height  = len(idxes)
+    output = {}
+
+    stack  = []
+    stack.append(output)
+
+    for depth in range(height):
+        stack_temp = []
+        while len(stack) > 0:
+            cur_elmt = stack.pop()
+            for idx in idxes[depth]:
+                cur_elmt[idx] = {}
+                stack_temp.append(cur_elmt[idx])
+        stack = stack_temp
+
+    return output
 
         
 def str2bool(v):

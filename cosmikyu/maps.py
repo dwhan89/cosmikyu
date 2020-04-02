@@ -41,6 +41,57 @@ def fnu(nu,tcmb=default_tcmb):
     ans = mu/np.tanh(old_div(mu,2.0)) - 4.0
     return ans
 
+class StampedSky(object):
+    def __init__(self, path, res_arcmin, shape):
+        self.path = path
+        self.res_arcmin = res_arcmin
+        self.res_arcmin_str = "%0.1f" % res_arcmin
+        self.shape = shape
+        self.size = np.product(shape)
+        self.frequencies = [str(s).zfill(3) for s in [30,90,148,219,277,350]]
+        self.rfunc = enmap.read_fits 
+
+    def __format_fname(self, fname_temp, sim_idx, freq=None):
+        sim_idx_str = str(sim_idx).zfill(6)
+        if freq is not None:
+            freq = str(freq).zfill(3)
+            fname = os.path.join(self.path, fname_temp.format(freq, sim_idx_str, self.res_arcmin_str, self.shape[0], self.shape[1]))
+        else:
+            fname = os.path.join(self.path, fname_temp.format(sim_idx_str, self.res_arcmin_str, self.size, self.shape[0], self.shape[1]))
+        return fname
+
+
+    def get_total_cmb(self, freq_idx, sim_idx, filename_only=False):
+        raise NotImplemented()
+    
+    def get_lensed_cmb(self, freq_idx, sim_idx, filename_only=False):
+        raise NotImplemented()
+
+    def get_kappa(self,filename_only=False):
+        raise NotImplemented()
+   
+    def get_galactic_dust(self,freq,filename_only=False):
+        raise NotImplemented()
+
+    def get_ksz(self, freq, sim_idx, filename_only=False):
+        filename = self.__format_fname('{}_ksz_{}_{}arcmin_{}x{}.fits', sim_idx=sim_idx, freq=freq)
+        return filename if filename_only else self.rfunc(filename)
+
+    def get_compton_y(self, sim_idx, tcmb=default_tcmb, scale=0.75):
+        return self.get_tsz(148, sim_idx, scale=scale)/(fnu(148)*tcmb * 1e6)
+
+    def get_cib(self, freq, sim_idx, filename_only=False, scale=0.75):
+        filename = self.__format_fname('{}_ir_pts_{}_{}arcmin_{}x{}.fits', sim_idx=sim_idx, freq=freq)
+        return filename if filename_only else self.rfunc(filename)*scale
+
+    def get_radio(self, freq, sim_idx, filename_only=False):
+        filename = self.__format_fname('{}_rad_pts_{}_{}arcmin_{}x{}.fits', sim_idx=sim_idx, freq=freq)
+        return filename if filename_only else self.rfunc(filename)
+
+    def get_tsz(self, freq, sim_idx, filename_only=False, scale=0.75):
+        filename = self.__format_fname('{}_tsz_{}_{}arcmin_{}x{}.fits', sim_idx=sim_idx, freq=freq)
+        return filename if filename_only else self.rfunc(filename)*scale
+
 
 class SehgalSky2010(object):
     # to handle orignal Sehgal et al sims
@@ -83,7 +134,7 @@ class SehgalSky2010(object):
         raise NotImplemented("soon")
 
     def get_compton_y(self, tcmb=default_tcmb, scale=0.75):
-        return self.get_tsz(148, scale)/(fnu(148)*tcmb * 1e6)
+        return self.get_tsz(148, scale=scale)/(fnu(148)*tcmb * 1e6)
 
     def get_cib(self,freq,filename_only=False, scale=0.75):
         filename = self.__format_fname('{}_ir_pts_{}.fits', freq=freq)

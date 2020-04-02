@@ -4,8 +4,7 @@ import os
 from past.utils import old_div
 from pixell import enmap
 import torch
-from torch.utils.data import Dataset, DataLoader
-from torchvision import transforms, utils
+from torch.utils.data import Dataset
 
 
 default_tcmb = 2.726

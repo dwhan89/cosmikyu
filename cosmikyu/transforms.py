@@ -1,7 +1,5 @@
 import numpy as np
 from pixell import enmap
-import torch
-from torchvision import transforms, utils
 from orphics import maps as omaps
 
 class LogScale(object):

@@ -3,6 +3,9 @@ import numpy as np
 import os
 from past.utils import old_div
 from pixell import enmap
+import torch
+from torch.utils.data import Dataset, DataLoader
+from torchvision import transforms, utils
 
 
 default_tcmb = 2.726
@@ -92,6 +95,35 @@ class StampedSky(object):
         filename = self.__format_fname('{}_tsz_{}_{}arcmin_{}x{}.fits', sim_idx=sim_idx, freq=freq)
         return filename if filename_only else self.rfunc(filename)*scale
 
+class StampedSkyDataSet(Dataset):
+    def __init__(self, root_dir, num_sim, res_arcmin, fg_type, freq, shape, transform=None):
+        self.stamped_sky = StampedSky(root_dir, res_arcmin, shape)
+        self.freq = freq
+        self.fg_rfuncs = {
+            'ir_pts': self.stamped_sky.get_cib,
+            'ksz': self.stamped_sky.get_ksz,
+            'rad_pts': self.stamped_sky.get_radio,
+            'tsz': self.stamped_sky.get_tsz   
+        }
+        self.fg_type = fg_type
+        self.rfunc = self.fg_rfuncs[self.fg_type]    
+        self.transform = transform
+        self.num_sim = num_sim
+        
+    
+    def __len__(self):
+        return self.num_sim
+    
+    def __getitem__(self, idx):
+        if torch.is_tensor(idx):
+            idx = idx.tolist()
+        
+        fg_map = self.rfunc(self.freq, idx, False)
+        sample = {'data': np.array(fg_map), 'wcs': fg_map.wcs.copy()}
+        if self.transform:
+            sample = self.transform(sample)
+         
+        return sample
 
 class SehgalSky2010(object):
     # to handle orignal Sehgal et al sims

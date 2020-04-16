@@ -53,16 +53,6 @@ class UnNormalize(Normalize):
              
         return sample
 
-class TakePS(object):
-    def __init__(self, bin_edges, shape):
-        self.bin_edges = bin_edges
-        self.shape = shape
-        self.taper, _ = omaps.get_taper(shape)
-
-    def __call__(self, sample):
-        emap = sample['map'] if 'map' in sample else  enmap.enmap(sample['data'], wcs=sample['wcs'])
-        
-
 
 class ToEnmap(object):
     def __call__(self, sample):
@@ -71,4 +61,52 @@ class ToEnmap(object):
 
         return sample
 
+class DropWCS(object):
+    def __call__(self, sample):
+        if 'wcs' in sample: del sample['wcs']
+        return sample
 
+class Taper(object):
+    def __init__(self, shape):
+        self.shape = shape
+        self.taper, _ = omaps.get_taper(shape, pad_percent=0.)
+        loc = self.taper == 0
+        self.taper[loc] = np.min(self.taper[~loc])
+        
+        
+    def __call__(self, sample):
+        assert('map' in sample)
+        sample['map'] = sample['map']*self.taper
+        return sample
+    
+class UnTaper(object):
+    def __init__(self, shape):
+        self.shape = shape
+        self.taper, _ = omaps.get_taper(shape, pad_percent=0.)
+        loc = self.taper == 0
+        self.taper[loc] = np.min(self.taper[~loc])
+        
+    def __call__(self, sample):
+        assert('map' in sample)
+        sample['map'] = np.nan_to_num(sample['map']/self.taper)
+        return sample
+    
+class TakePS(object):
+    def __init__(self, bin_edges, shape, is_tapered=False, return_dl=True):
+        self.bin_edges = bin_edges
+        self.shape = shape
+        self.taper, _ = omaps.get_taper(shape)
+        loc = self.taper == 0
+        self.taper[loc] = np.min(self.taper[~loc])
+        self.is_tapered = False
+        self.return_dl = return_dl
+        
+    def __call__(self, sample):
+        emap = sample['map'].copy() if 'map' in sample else  enmap.enmap(sample['data'], wcs=sample['wcs'])
+        if self.is_tapered:
+            emap = np.nan_to_num(emap/self.taper)
+        lbin, ps = omaps.binned_power(emap, self.bin_edges, mask=self.taper)
+        ps = ps if not self.return_dl else ps*(lbin*(lbin+1)/(2*np.pi))
+        
+        sample['ps'] = (lbin, np.nan_to_num(ps))
+        return sample

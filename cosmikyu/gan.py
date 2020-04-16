@@ -68,7 +68,8 @@ class WGAN(object):
         batches_done = 0
 
         for epoch in range(nepochs):
-            for i, (imgs, _) in enumerate(dataloader):
+            for i, sample in enumerate(dataloader):
+                imgs = sample['data']
                 real_imgs = Variable(imgs.type(Tensor))
 
                 opt_disc.zero_grad()
@@ -105,7 +106,8 @@ class WGAN(object):
                         )
 
                 if batches_done % sample_interval == 0:
-                    save_image(gen_imgs.data[:5], os.path.join(self.sample_path, "%d.png" % batches_done), normalize=True)
+                    pass
+                    #save_image(gen_imgs.data[:5], os.path.join(self.sample_path, "%d.png" % batches_done), normalize=True)
                 if batches_done % save_interval == 0 and save_states:
                     self.save_states()
                 batches_done += 1

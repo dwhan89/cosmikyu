@@ -9,4 +9,4 @@ torchvision
 visdom
 healpy
 pixell
-future
+scikit-image

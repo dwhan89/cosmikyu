@@ -14,7 +14,7 @@ C_light = 2.99792e+10
 
 def rand_geometry(width, height, res=None, shape=None, seed=None):
     np.random.seed(seed)
-    dec = np.random.uniform(-1*np.pi/2, np.pi/2)
+    dec = np.random.uniform(-1*np.pi/2, np.pi/2)/9.
     ra = np.random.uniform(-1*np.pi, np.pi)
     return get_geometry(ra, dec, width, height, res=res, shape=shape)
     
@@ -139,46 +139,47 @@ class SehgalSky2010(object):
             self.rfunc = enmap.read_map
             self.shape,self.wcs = enmap.read_map_geometry(self.get_lensed_cmb(True))
         elif self.data_type == 'alm':
-            self.rfunc = lambda x : hp.read_alm(x, hdu=1)
+            self.rfunc = lambda x : hp.read_alm(x, hdu=1).astype("complex128")
 
-    def __format_fname(self, fname_temp, freq=None):
+    def __format_fname(self, fname_temp, freq=None, euler=None):
+        post_fix = "" if euler is None else "_%03d_%03d_%03d" %(euler[0], euler[1], euler[2])
         if freq is not None:
             freq = str(freq).zfill(3)
-            fname = os.path.join(self.path, fname_temp.format(freq, self.data_type))
+            fname = os.path.join(self.path, fname_temp.format(freq, self.data_type, post_fix))
         else:
-            fname = os.path.join(self.path, fname_temp.format(self.data_type))
+            fname = os.path.join(self.path, fname_temp.format(self.data_type, post_fix))
         return fname
 
     def get_total_cmb(self,freq,filename_only=False):
-        filename = self.__format_fname('{}_skymap_{}.fits', freq=freq)
+        filename = self.__format_fname('{}_skymap_{}{}.fits', freq=freq)
         return filename if filename_only else self.rfunc(filename)
 
     def get_lensed_cmb(self,freq, filename_only=False):
-        filename = self.__format_fname('{}_lensedcmb_{}.fits', freq=freq)
+        filename = self.__format_fname('{}_lensedcmb_{}{}.fits', freq=freq)
         return filename if filename_only else self.rfunc(filename)
 
-    def get_ksz(self, freq, filename_only=False):
-        filename = self.__format_fname('{}_ksz_{}.fits', freq=freq)
+    def get_ksz(self, freq, filename_only=False, euler=(0,0,0)):
+        filename = self.__format_fname('{}_ksz_{}{}.fits', freq=freq, euler=euler)
         return filename if filename_only else self.rfunc(filename)
 
     def get_kappa(self,filename_only=False):
         raise NotImplemented("soon")
 
-    def get_compton_y(self, tcmb=default_tcmb, scale=0.75):
-        return self.get_tsz(148, scale=scale)/(fnu(148)*tcmb * 1e6)
+    def get_compton_y(self, tcmb=default_tcmb, scale=0.75, euler=(0,0,0)):
+        return self.get_tsz(148, scale=scale, euler=euler)/(fnu(148)*tcmb * 1e6)
 
-    def get_cib(self,freq,filename_only=False, scale=0.75):
-        filename = self.__format_fname('{}_ir_pts_{}.fits', freq=freq)
+    def get_cib(self,freq,filename_only=False, scale=0.75, euler=(0,0,0)): 
+        filename = self.__format_fname('{}_ir_pts_{}{}.fits', freq=freq, euler=euler)
         return filename if filename_only else self.rfunc(filename)*scale
 
-    def get_radio(self,freq,filename_only=False):
-        filename = self.__format_fname('{}_rad_pts_{}.fits', freq=freq)
+    def get_radio(self,freq,filename_only=False, euler=(0,0,0)):
+        filename = self.__format_fname('{}_rad_pts_{}{}.fits', freq=freq, euler=euler)
         return filename if filename_only else self.rfunc(filename)
 
-    def get_galactic_dust(self,freq,filename_only=False):
-        filename = self.__format_fname('{}_dust_{}.fits', freq=freq)
+    def get_galactic_dust(self,freq,filename_only=False): 
+        filename = self.__format_fname('{}_dust_{}{}.fits', freq=freq)
         return filename if filename_only else self.rfunc(filename)
 
-    def get_tsz(self,freq,filename_only=False, scale=0.75):
-        filename = self.__format_fname('{}_tsz_{}.fits', freq=freq)
+    def get_tsz(self,freq,filename_only=False, scale=0.75, euler=(0,0,0)):
+        filename = self.__format_fname('{}_tsz_{}{}.fits', freq=freq, euler=euler)
         return filename if filename_only else self.rfunc(filename)*scale

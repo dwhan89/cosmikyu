@@ -140,9 +140,16 @@ class SehgalSky2010(object):
             self.shape,self.wcs = enmap.read_map_geometry(self.get_lensed_cmb(True))
         elif self.data_type == 'alm':
             self.rfunc = lambda x : hp.read_alm(x, hdu=1).astype("complex128")
+        self.fg_loaders = {
+            'ir_pts': self.get_cib,
+            'ksz': self.get_ksz,
+            'rad_pts': self.get_radio,
+            'tsz': self.get_tsz
+            }
+
 
     def __format_fname(self, fname_temp, freq=None, euler=None):
-        post_fix = "" if euler is None else "_%03d_%03d_%03d" %(euler[0], euler[1], euler[2])
+        post_fix = "" #if euler is None else "_%03d_%03d_%03d" %(euler[0], euler[1], euler[2])
         if freq is not None:
             freq = str(freq).zfill(3)
             fname = os.path.join(self.path, fname_temp.format(freq, self.data_type, post_fix))

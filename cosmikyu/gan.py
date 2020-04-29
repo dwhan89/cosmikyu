@@ -41,8 +41,9 @@ class WGAN(object):
         discriminator_state_file = os.path.join(self.output_path, "discriminator.pt")
         try:
             print("loading saved states")
-            self.generator.load_state_dict(torch.load(generator_state_file))
-            self.discriminator.load_state_dict(torch.load(discriminator_state_file))
+            ## fix here
+            self.generator.load_state_dict(torch.load(generator_state_file, map_location=torch.device('cpu')))
+            self.discriminator.load_state_dict(torch.load(discriminator_state_file, map_location=torch.device('cpu')))
         except Exception:
             print("failed to load saved states")
 
@@ -52,6 +53,12 @@ class WGAN(object):
         discriminator_state_file = os.path.join(self.output_path, "discriminator.pt")
         torch.save(self.generator.state_dict(), generator_state_file)
         torch.save(self.discriminator.state_dict(), discriminator_state_file)
+
+    def generate_image(self, num_imgs, seed=None):
+        if not seed: np.random.seed(seed)
+        Tensor = torch.cuda.FloatTensor if self.cuda else torch.FloatTensor
+        z = Variable(Tensor(np.random.normal(0, 1, (num_imgs, self.latent_dim))))
+        return self.generator(z).detach() 
 
     def train(self, dataloader, lr=0.00005, nepochs=200, clip_tresh=0.01, num_critic=5, sample_interval=1000,
               save_interval=10000, load_states=True, save_states=True, verbose=True, visdom_plotter=None):

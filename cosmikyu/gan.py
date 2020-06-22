@@ -9,7 +9,7 @@ import torch.nn as nn
 import torch
 
 
-class WGAN(object):
+class GAN(object):
     def __init__(self, identifier, shape, latent_dim, output_path=None, sample_path=None, cuda=False, ngpu=1):
         self.cuda = cuda
         if not self.cuda:
@@ -32,9 +32,8 @@ class WGAN(object):
             print("[WARNING] You have a CUDA device. You probably want to run with CUDA enabled")
         self.device = torch.device("cuda:0" if self.cuda else "cpu")
 
-        self.generator = WGAN_Generator(shape, latent_dim, ngpu=ngpu).to(device=self.device)
-        self.discriminator = WGAN_Discriminator(shape, ngpu=ngpu).to(device=self.device)
-
+        self.generator = None
+        self.discriminator = None
 
     def load_states(self):
         generator_state_file = os.path.join(self.output_path, "generator.pt")
@@ -59,7 +58,7 @@ class WGAN(object):
         if not seed: np.random.seed(seed)
         Tensor = torch.cuda.FloatTensor if self.cuda else torch.FloatTensor
         z = Variable(Tensor(np.random.normal(0, 1, (num_imgs, self.latent_dim))))
-        return self.generator(z).detach() 
+        return self.generator(z).detach()
 
     def train(self, dataloader, lr=0.00005, nepochs=200, clip_tresh=0.01, num_critic=5, sample_interval=1000,
               save_interval=10000, load_states=True, save_states=True, verbose=True, visdom_plotter=None):
@@ -70,8 +69,6 @@ class WGAN(object):
         opt_gen = torch.optim.RMSprop(self.generator.parameters(), lr=lr)
         opt_disc = torch.optim.RMSprop(self.discriminator.parameters(), lr=lr)
         Tensor = torch.cuda.FloatTensor if self.cuda else torch.FloatTensor
-
-
 
         batches_done = 0
 
@@ -110,21 +107,33 @@ class WGAN(object):
 
                     if verbose:
                         print("[Epoch %d/%d] [Batch %d/%d] [D loss: %f] [G loss: %f]"
-                            % (epoch, nepochs, batches_done % len(dataloader), len(dataloader), -1*loss_D.item(), -1*loss_G.item())
-                        )
+                              % (epoch, nepochs, batches_done % len(dataloader), len(dataloader), -1 * loss_D.item(),
+                                 -1 * loss_G.item())
+                              )
 
                 if batches_done % sample_interval == 0:
                     pass
-                    #save_image(gen_imgs.data[:5], os.path.join(self.sample_path, "%d.png" % batches_done), normalize=True)
+                    # save_image(gen_imgs.data[:5], os.path.join(self.sample_path, "%d.png" % batches_done), normalize=True)
                 if batches_done % save_interval == 0 and save_states:
                     self.save_states()
                 batches_done += 1
 
                 if visdom_plotter is not None:
-                    visdom_plotter.plot("D loss", 'D loss', np.array([batches_done]), np.array([-1*loss_D.item()]), xlabel='batches_done')
-                    visdom_plotter.plot("G loss", 'G_loss', np.array([batches_done]), np.array([-1*loss_G.item()]), xlabel='batches_done')
+                    visdom_plotter.plot("D loss", 'D loss', np.array([batches_done]), np.array([-1 * loss_D.item()]),
+                                        xlabel='batches_done')
+                    visdom_plotter.plot("G loss", 'G_loss', np.array([batches_done]), np.array([-1 * loss_G.item()]),
+                                        xlabel='batches_done')
         if save_states:
             self.save_states()
+
+
+class WGAN(GAN):
+    def __init__(self, identifier, shape, latent_dim, output_path=None, sample_path=None, cuda=False, ngpu=1):
+        super.__init__(identifier, shape, latent_dim, output_path=None, sample_path=None, cuda=False, ngpu=1)
+
+        self.generator = WGAN_Generator(shape, latent_dim, ngpu=ngpu).to(device=self.device)
+        self.discriminator = WGAN_Discriminator(shape, ngpu=ngpu).to(device=self.device)
+
 
 class WGAN_Generator(nn.Module):
     def __init__(self, shape, latent_dim, ngpu=1):

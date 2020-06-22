@@ -39,11 +39,12 @@ class WGAN(object):
     def load_states(self):
         generator_state_file = os.path.join(self.output_path, "generator.pt")
         discriminator_state_file = os.path.join(self.output_path, "discriminator.pt")
+
         try:
             print("loading saved states")
             ## fix here
-            self.generator.load_state_dict(torch.load(generator_state_file, map_location=torch.device('cpu')))
-            self.discriminator.load_state_dict(torch.load(discriminator_state_file, map_location=torch.device('cpu')))
+            self.generator.load_state_dict(torch.load(generator_state_file, map_location=self.device))
+            self.discriminator.load_state_dict(torch.load(discriminator_state_file, map_location=self.device))
         except Exception:
             print("failed to load saved states")
 
@@ -76,7 +77,7 @@ class WGAN(object):
 
         for epoch in range(nepochs):
             for i, sample in enumerate(dataloader):
-                imgs = sample['data']
+                imgs = sample[0]
                 real_imgs = Variable(imgs.type(Tensor))
 
                 opt_disc.zero_grad()

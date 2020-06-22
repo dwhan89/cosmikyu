@@ -10,3 +10,5 @@ visdom
 healpy
 pixell
 scikit-image
+tensorboard
+tensorboardX

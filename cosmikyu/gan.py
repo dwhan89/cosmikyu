@@ -8,6 +8,7 @@ from torch.autograd import Variable
 import torch.nn as nn
 import torch
 
+import mlflow
 
 class GAN(object):
     def __init__(self, identifier, shape, latent_dim, output_path=None, sample_path=None, cuda=False, ngpu=1):
@@ -17,16 +18,11 @@ class GAN(object):
         self.shape = shape
         self.latent_dim = latent_dim
         self.identifier = identifier
-
-        if output_path is None:
-            output_path = os.path.join(config.default_output_dir, identifier)
-        if sample_path is None:
-            sample_path = os.path.join(output_path, "sample")
-        self.output_path = output_path
-        self.sample_path = sample_path
-
-        os.makedirs(self.output_path, exist_ok=True)
-        os.makedirs(self.sample_path, exist_ok=True)
+        
+        self.output_path = output_path or os.path.join(config.default_output_dir)
+        self.tracking_path = os.path.join(self.output_path, "mlruns")
+        mlflow.set_tracking_uri(self.tracking_path)
+        self.experiment = mlflow.get_experiment_by_name(identifier) or mlflow.create_experiment(identifier)
 
         if torch.cuda.is_available() and not self.cuda:
             print("[WARNING] You have a CUDA device. You probably want to run with CUDA enabled")
@@ -61,7 +57,7 @@ class GAN(object):
         return self.generator(z).detach()
 
     def train(self, dataloader, lr=0.00005, nepochs=200, clip_tresh=0.01, num_critic=5, sample_interval=1000,
-              save_interval=10000, load_states=True, save_states=True, verbose=True, visdom_plotter=None):
+              save_interval=10000, load_states=True, save_states=True, verbose=True, visdom_plotter=None, mlflow_runid=None):
 
         if load_states:
             self.load_states()
@@ -129,7 +125,7 @@ class GAN(object):
 
 class WGAN(GAN):
     def __init__(self, identifier, shape, latent_dim, output_path=None, sample_path=None, cuda=False, ngpu=1):
-        super.__init__(identifier, shape, latent_dim, output_path=None, sample_path=None, cuda=False, ngpu=1)
+        super().__init__(identifier, shape, latent_dim, output_path=output_path, sample_path=sample_path, cuda=cuda, ngpu=ngpu)
 
         self.generator = WGAN_Generator(shape, latent_dim, ngpu=ngpu).to(device=self.device)
         self.discriminator = WGAN_Discriminator(shape, ngpu=ngpu).to(device=self.device)

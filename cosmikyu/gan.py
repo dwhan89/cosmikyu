@@ -11,16 +11,16 @@ import torch
 import mlflow
 
 class GAN(object):
-    def __init__(self, identifier, shape, latent_dim, output_path=None, sample_path=None, cuda=False, ngpu=1):
+    def __init__(self, identifier, shape, latent_dim, output_path=None, experiment_path=None, cuda=False, ngpu=1):
         self.cuda = cuda
-        if not self.cuda:
-            ngpu = 0
+        self.ngpu = 0 if not self.cuda else ngpu
         self.shape = shape
         self.latent_dim = latent_dim
         self.identifier = identifier
         
         self.output_path = output_path or os.path.join(config.default_output_dir)
         self.tracking_path = os.path.join(self.output_path, "mlruns")
+        self.experiment_path = experiment_path or os.path.join(self.output_path, identifier)
         mlflow.set_tracking_uri(self.tracking_path)
         self.experiment = mlflow.get_experiment_by_name(identifier) or mlflow.create_experiment(identifier)
 
@@ -37,7 +37,6 @@ class GAN(object):
 
         try:
             print("loading saved states")
-            ## fix here
             self.generator.load_state_dict(torch.load(generator_state_file, map_location=self.device))
             self.discriminator.load_state_dict(torch.load(discriminator_state_file, map_location=self.device))
         except Exception:
@@ -57,8 +56,9 @@ class GAN(object):
         return self.generator(z).detach()
 
     def train(self, dataloader, lr=0.00005, nepochs=200, clip_tresh=0.01, num_critic=5, sample_interval=1000,
-              save_interval=10000, load_states=True, save_states=True, verbose=True, visdom_plotter=None, mlflow_runid=None):
+              save_interval=10000, load_states=True, save_states=True, verbose=True, visdom_plotter=None, runid="trial"):
 
+        run_path = os.path.join(self.experiment_path, runid)
         if load_states:
             self.load_states()
 
@@ -108,8 +108,7 @@ class GAN(object):
                               )
 
                 if batches_done % sample_interval == 0:
-                    pass
-                    # save_image(gen_imgs.data[:5], os.path.join(self.sample_path, "%d.png" % batches_done), normalize=True)
+                    save_image(gen_imgs.data[:5], os.path.join(run_path, "%d.png" % batches_done), normalize=True)
                 if batches_done % save_interval == 0 and save_states:
                     self.save_states()
                 batches_done += 1
@@ -124,11 +123,11 @@ class GAN(object):
 
 
 class WGAN(GAN):
-    def __init__(self, identifier, shape, latent_dim, output_path=None, sample_path=None, cuda=False, ngpu=1):
-        super().__init__(identifier, shape, latent_dim, output_path=output_path, sample_path=sample_path, cuda=cuda, ngpu=ngpu)
+    def __init__(self, identifier, shape, latent_dim, output_path=None, experiment_path=None, cuda=False, ngpu=1):
+        super().__init__(identifier, shape, latent_dim, output_path=output_path, experiment_path=experiment_path, cuda=cuda, ngpu=ngpu)
 
-        self.generator = WGAN_Generator(shape, latent_dim, ngpu=ngpu).to(device=self.device)
-        self.discriminator = WGAN_Discriminator(shape, ngpu=ngpu).to(device=self.device)
+        self.generator = WGAN_Generator(shape, latent_dim, ngpu=self.ngpu).to(device=self.device)
+        self.discriminator = WGAN_Discriminator(shape, ngpu=self.ngpu).to(device=self.device)
 
 
 class WGAN_Generator(nn.Module):

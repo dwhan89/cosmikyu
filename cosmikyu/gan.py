@@ -33,6 +33,8 @@ class GAN(object):
         self.generator = None
         self.discriminator = None
 
+        self.Tensor = torch.cuda.FloatTensor if self.cuda else torch.FloatTensor
+
     def load_states(self, output_path, mlflow_run=None):
         generator_state_file = os.path.join(output_path, "generator.pt")
         discriminator_state_file = os.path.join(output_path, "discriminator.pt")
@@ -90,8 +92,6 @@ class GAN(object):
         if load_states:
             self.load_states(model_path)
         
-        Tensor = torch.cuda.FloatTensor if self.cuda else torch.FloatTensor
-
         # Get Optimizers
         opt_gen, opt_disc = self._get_optimizers(**kwargs)
 
@@ -99,12 +99,12 @@ class GAN(object):
         for epoch in range(nepochs):
             for i, sample in enumerate(dataloader):
                 imgs = sample[0]
-                real_imgs = Variable(imgs.type(Tensor))
+                real_imgs = Variable(imgs.type(self.Tensor))
 
                 opt_disc.zero_grad()
 
                 # Sample noise as generator input
-                z = Variable(Tensor(np.random.normal(0, 1, (imgs.shape[0], self.latent_dim))))
+                z = Variable(self.Tensor(np.random.normal(0, 1, (imgs.shape[0], self.latent_dim))))
 
                 # Generate a batch of images
                 gen_imgs = self.generator(z).detach()
@@ -201,11 +201,10 @@ class WGAN_GP(GAN):
     
     def _eval_discriminator_loss(self, real_imgs, gen_imgs, **kwargs):         
         # determine the interpolation point 
-        Tensor = torch.cuda.FloatTensor if self.cuda else torch.FloatTensor
-        eps = Tensor(np.random.random((real_imgs.data.size(0), 1, 1, 1)))
+        eps = self.Tensor(np.random.random((real_imgs.data.size(0), 1, 1, 1)))
         interp_data = (eps * real_imgs.data + ((1 - eps) * gen_imgs.data)).requires_grad_(True)
         disc_interp = self.discriminator(interp_data)
-        storage = Variable(Tensor(real_imgs.data.shape[0], 1).fill_(1.0), requires_grad=False)
+        storage = Variable(self.Tensor(real_imgs.data.shape[0], 1).fill_(1.0), requires_grad=False)
         # compute gradient w.r.t. interpolates
         gradients = autograd.grad(
             outputs=disc_interp,
@@ -225,6 +224,8 @@ class WGAN_GP(GAN):
         super().train(dataloader, nepochs=nepochs, ncritics=ncritics, sample_interval=sample_interval,
               save_interval=save_interval, load_states=load_states, save_states=save_states, verbose=verbose, mlflow_run=mlflow_run,
               lr=lr, betas=betas, lambda_gp=lambda_gp)
+
+
 
 class WGAN_Generator(nn.Module):
     def __init__(self, shape, latent_dim, ngpu=1):
@@ -257,6 +258,52 @@ class WGAN_Generator(nn.Module):
         img = img.view(img.shape[0], *self.shape)
         return img
 
+class DCGAN(GAN):
+    def __init__(self, identifier, shape, latent_dim, output_path=None, experiment_path=None, cuda=False, ngpu=1, num_channels=1):
+        super().__init__(identifier, shape, latent_dim, output_path=output_path, experiment_path=experiment_path,
+                         cuda=cuda, ngpu=ngpu)
+
+        self.generator = DCGAN_Generator(shape, latent_dim, num_channels=num_channels, ngpu=self.ngpu)\
+            .to(device=self.device)
+        self.discriminator = DCGAN_Discriminator(shape, ngpu=self.ngpu).to(device=self.device)
+        self.adversarial_loss = torch.nn.BCELoss(ngpu=self.ngpu).to(device=self.device)
+
+    def _weights_init_normal(self, layer):
+        classname = layer.__class__.__name__
+        if classname.find("Conv") != -1:
+            torch.nn.init.normal_(layer.weight.data, 0.0, 0.02)
+        elif classname.find("BatchNorm2d") != -1:
+            torch.nn.init.normal_(layer.weight.data, 1.0, 0.02)
+            torch.nn.init.constant_(layer.bias.data, 0.0)
+
+    def _post_process_discriminator(self, **kwargs):
+        pass
+
+    def _get_optimizers(self, **kwargs):
+        lr, betas = kwargs['lr'], kwargs["betas"]
+        opt_gen = torch.optim.Adam(self.generator.parameters(), lr=lr, betas=betas)
+        opt_disc = torch.optim.Adam(self.discriminator.parameters(), lr=lr, betas=betas)
+        return opt_gen, opt_disc
+
+    def _eval_generator_loss(self, real_imgs, gen_imgs):
+        valid = Variable(self.Tensor(gen_imgs.shape[0], 1).fill_(1.0), requires_grad=False)
+        return self.adversarial_loss(self.discriminator(gen_imgs), valid)
+
+    def _eval_discriminator_loss(self, real_imgs, gen_imgs, **kwargs):
+        valid = Variable(self.Tensor(real_imgs.shape[0], 1).fill_(1.0), requires_grad=False)
+        fake = Variable(self.Tensor(real_imgs.shape[0], 1).fill_(0.0), requires_grad=False)
+        real_loss = self.adversarial_loss(self.discriminator(real_imgs), valid)
+        fake_loss = self.adversarial_loss(self.discriminator(gen_imgs.detach()), fake)
+        return (real_loss + fake_loss) / 2
+
+    def train(self, dataloader, nepochs=200, ncritics=5, sample_interval=1000,
+              save_interval=10000, load_states=True, save_states=True, verbose=True, mlflow_run=None, lr=0.0002,
+              betas=(0.5, 0.999)):
+        super().train(dataloader, nepochs=nepochs, ncritics=ncritics, sample_interval=sample_interval,
+                      save_interval=save_interval, load_states=load_states, save_states=save_states, verbose=verbose,
+                      mlflow_run=mlflow_run,
+                      lr=lr, betas=betas)
+
 
 class WGAN_Discriminator(nn.Module):
     def __init__(self, shape, ngpu=1):
@@ -278,4 +325,82 @@ class WGAN_Discriminator(nn.Module):
             ret = nn.parallel.data_parallel(self.model, flattened, range(self.ngpu))
         else:
             ret = self.model(flattened)
+        return ret
+
+
+class DCGAN_Generator(nn.Module):
+    def __init__(self, shape, latent_dim, num_channels, ngpu=1):
+        super(DCGAN_Generator, self).__init__()
+
+        self.shape = shape
+        self.latent_dim = latent_dim
+        self.ngpu = ngpu
+        self.num_channels = num_channels
+
+        img_size = np.product(np.product(shape[-2:]))
+        self.init_size = np.product(img_size) // 4
+        self.l1 = nn.Sequential(nn.Linear(latent_dim, 128 * self.init_size ** 2))
+
+        self.conv_blocks = nn.Sequential(
+            nn.BatchNorm2d(128),
+            nn.Upsample(scale_factor=2),
+            nn.Conv2d(128, 128, 3, stride=1, padding=1),
+            nn.BatchNorm2d(128, 0.8),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Upsample(scale_factor=2),
+            nn.Conv2d(128, 64, 3, stride=1, padding=1),
+            nn.BatchNorm2d(64, 0.8),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Conv2d(64, self.num_channels, 3, stride=1, padding=1),
+            nn.Tanh(),
+        )
+
+    def forward(self, z):
+        if z.is_cuda and self.ngpu > 1:
+            out = nn.parallel.data_parallel(self.l1, z, range(self.ngpu))
+            out = out.view(out.shape[0], 128, self.init_size, self.init_size)
+            img = nn.parallel.data_parallel(self.conv_blocks, out, range(self.ngpu))
+        else:
+            out = self.l1(z)
+            out = out.view(out.shape[0], 128, self.init_size, self.init_size)
+            img = self.conv_blocks(out)
+        return img
+
+
+class DCGAN_Discriminator(nn.Module):
+    def __init__(self, shape, latent_dim, num_channels, ngpu=1):
+        super(DCGAN_Discriminator, self).__init__()
+
+        self.shape = shape
+        self.latent_dim = latent_dim
+        self.ngpu = ngpu
+        self.num_channels = num_channels
+
+        def discriminator_block(in_filters, out_filters, normalize=True):
+            block = [nn.Conv2d(in_filters, out_filters, 3, 2, 1), nn.LeakyReLU(0.2, inplace=True), nn.Dropout2d(0.25)]
+            if normalize:
+                block.append(nn.BatchNorm2d(out_filters, 0.8))
+            return block
+
+        self.model = nn.Sequential(
+            *discriminator_block(self.num_channels, 16, normalize=False),
+            *discriminator_block(16, 32),
+            *discriminator_block(32, 64),
+            *discriminator_block(64, 128),
+        )
+
+        # The height and width of downsampled image
+        ds_size = np.product(shape) // 2 ** 4
+        self.adv_layer = nn.Sequential(nn.Linear(128 * ds_size ** 2, 1), nn.Sigmoid())
+
+    def forward(self, img):
+        if img.is_cuda and self.ngpu > 1:
+            out = nn.parallel.data_parallel(self.model, img, range(self.ngpu))
+            out = out.view(out.shape[0], -1)
+            ret = nn.parallel.data_parallel(self.adv_layer, out, range(self.ngpu))
+        else:
+            out = self.model(img)
+            out = out.view(out.shape[0], -1)
+            ret = self.adv_layer(out)
+
         return ret

@@ -6,7 +6,6 @@ from torchvision.utils import save_image
 from torch.autograd import Variable
 import torch.autograd as autograd
 
-tf.keras.layers.Reshape
 import torch.nn as nn
 import torch
 
@@ -298,7 +297,7 @@ class DCGAN(GAN):
         self.nconv_fcdis = nconv_fcdis
         self.generator = DCGAN_Generator(shape, latent_dim, nconv_layer=self.nconv_layer_gen, nconv_fc=self.nconv_fcgen,
                                          ngpu=self.ngpu).to(device=self.device)
-        self.discriminator = DCGAN_Discriminator(shape, nconv_layer=self.layer_disc, nconv_fc=self.nconv_fcdis,
+        self.discriminator = DCGAN_Discriminator(shape, nconv_layer=self.nconv_layer_disc, nconv_fc=self.nconv_fcdis,
                                                  ngpu=self.ngpu).to(device=self.device)
 
         def _weights_init_normal(layer):
@@ -331,6 +330,7 @@ class DCGAN(GAN):
     def _eval_discriminator_loss(self, real_imgs, gen_imgs, **kwargs):
         valid = Variable(self.Tensor(real_imgs.shape[0], 1).fill_(1.0), requires_grad=False)
         fake = Variable(self.Tensor(real_imgs.shape[0], 1).fill_(0.0), requires_grad=False)
+        print(real_imgs.shape, gen_imgs.shape)
         real_loss = self.adversarial_loss(self.discriminator(real_imgs), valid)
         fake_loss = self.adversarial_loss(self.discriminator(gen_imgs), fake)
         return (real_loss + fake_loss) / 2
@@ -362,14 +362,14 @@ class DCGAN_Generator(nn.Module):
             conv_layers = []
             for i in range(nconv_layer):
                 conv_layers.extend([nn.Upsample(scale_factor=2),
-                                    nn.Conv2d(nconv_lc / 2 ** i, nconv_lc / 2 ** (i + 1), 3, stride=1, padding=1),
-                                    nn.BatchNorm2d(nconv_lc / 2 ** (i + 1), 0.8),
+                                    nn.Conv2d(nconv_lc // 2 ** i, nconv_lc // 2 ** (i + 1), 3, stride=1, padding=1),
+                                    nn.BatchNorm2d(nconv_lc // 2 ** (i + 1), 0.8),
                                     nn.LeakyReLU(0.2, inplace=True)])
             return conv_layers
 
-        layers = [nn.Linear(self.latent_dim, self.nconv_lc * self.ds_size ** 2),
-                  Reshape(nconv_lc, self.ds_size, self.ds_size),
-                  nn.BatchNorm2d(self.net_dim)]
+        layers = [nn.Linear(self.latent_dim, nconv_lc * self.ds_size ** 2),
+                  Reshape((nconv_lc, self.ds_size, self.ds_size)),
+                  nn.BatchNorm2d(nconv_lc)]
 
         layers.extend(_get_conv_layers(self.nconv_layer, nconv_lc))
 
@@ -395,7 +395,7 @@ class DCGAN_Discriminator(nn.Module):
         self.nconv_fc = nconv_fc
         self.ds_size = shape[-1] // 2 ** self.nconv_layer
 
-        nconv_lc = nconv_fc * 2 ** self.nconv_layer
+        nconv_lc = int(nconv_fc * 2 ** self.nconv_layer)
 
         def discriminator_block(in_filters, out_filters, normalize=True):
             block = [nn.Conv2d(in_filters, out_filters, 3, 2, 1), nn.LeakyReLU(0.2, inplace=True), nn.Dropout2d(0.25)]
@@ -404,7 +404,7 @@ class DCGAN_Discriminator(nn.Module):
             return block
 
         layers = [*discriminator_block(self.shape[0], nconv_fc, normalize=False)]
-        for i in range(1, self.nconv_layer + 1):
+        for i in range( self.nconv_layer):
             layers.extend(discriminator_block(self.nconv_fc * 2 ** i, self.nconv_fc * 2 ** (i + 1)))
 
         layers.extend([nn.Linear(nconv_lc * self.ds_size ** 2, 1), nn.Sigmoid()])

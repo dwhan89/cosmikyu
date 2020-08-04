@@ -296,7 +296,6 @@ class WGAN_Discriminator(nn.Module):
         return ret
 
 
-
 class DCGAN_SIMPLE(GAN):
     def __init__(self, identifier, shape, latent_dim, output_path=None, experiment_path=None, cuda=False, ngpu=1,
                  nconv_layer_gen=2, nconv_layer_disc=2, nconv_fcgen=32, nconv_fcdis=32):
@@ -307,14 +306,16 @@ class DCGAN_SIMPLE(GAN):
         self.nconv_layer_disc = nconv_layer_disc
         self.nconv_fcgen = nconv_fcgen
         self.nconv_fcdis = nconv_fcdis
-       
-        self.model_params.update({"nconv_layer_gen":self.nconv_layer_gen, "nconv_layer_disc":self.nconv_layer_disc, 
-                "nconv_fcgen":self.nconv_fcgen, "nconv_fcdis":self.nconv_fcdis})
-        
-        self.generator = DCGAN_SIMPLE_Generator(shape, latent_dim, nconv_layer=self.nconv_layer_gen, nconv_fc=self.nconv_fcgen,
-                                         ngpu=self.ngpu).to(device=self.device)
-        self.discriminator = DCGAN_SIMPLE_Discriminator(shape, nconv_layer=self.nconv_layer_disc, nconv_fc=self.nconv_fcdis,
-                                                 ngpu=self.ngpu).to(device=self.device)
+
+        self.model_params.update({"nconv_layer_gen": self.nconv_layer_gen, "nconv_layer_disc": self.nconv_layer_disc,
+                                  "nconv_fcgen": self.nconv_fcgen, "nconv_fcdis": self.nconv_fcdis})
+
+        self.generator = DCGAN_SIMPLE_Generator(shape, latent_dim, nconv_layer=self.nconv_layer_gen,
+                                                nconv_fc=self.nconv_fcgen,
+                                                ngpu=self.ngpu).to(device=self.device)
+        self.discriminator = DCGAN_SIMPLE_Discriminator(shape, nconv_layer=self.nconv_layer_disc,
+                                                        nconv_fc=self.nconv_fcdis,
+                                                        ngpu=self.ngpu).to(device=self.device)
 
         # Initialize weights
         self.generator.apply(self._weights_init_normal)
@@ -353,7 +354,7 @@ class DCGAN_SIMPLE(GAN):
     def train(self, dataloader, nepochs=200, ncritics=5, sample_interval=1000,
               save_interval=10000, load_states=True, save_states=True, verbose=True, mlflow_run=None, lr=0.0002,
               betas=(0.5, 0.999)):
-        
+
         super().train(dataloader, nepochs=nepochs, ncritics=ncritics, sample_interval=sample_interval,
                       save_interval=save_interval, load_states=load_states, save_states=save_states, verbose=verbose,
                       mlflow_run=mlflow_run,
@@ -371,11 +372,11 @@ class DCGAN_SIMPLE_Generator(nn.Module):
         self.nconv_fc = nconv_fc
         self.ds_size = shape[-1] // 2 ** (self.nconv_layer)
 
-        nconv_lc = nconv_fc * 2 ** (self.nconv_layer-1)
+        nconv_lc = nconv_fc * 2 ** (self.nconv_layer - 1)
 
         def _get_conv_layers(nconv_layer, nconv_lc):
             conv_layers = []
-            for i in range(nconv_layer-1):
+            for i in range(nconv_layer - 1):
                 conv_layers.extend([nn.Upsample(scale_factor=2),
                                     nn.Conv2d(nconv_lc // 2 ** i, nconv_lc // 2 ** (i + 1), 3, stride=1, padding=1),
                                     nn.BatchNorm2d(nconv_lc // 2 ** (i + 1), 0.8),
@@ -410,7 +411,8 @@ class DCGAN_SIMPLE_Discriminator(nn.Module):
         self.nconv_layer = nconv_layer
         self.nconv_fc = nconv_fc
         self.ds_size = shape[-1] // 2 ** (self.nconv_layer)
-        nconv_lc = nconv_fc * 2 ** (self.nconv_layer-1)
+        nconv_lc = nconv_fc * 2 ** (self.nconv_layer - 1)
+
         def discriminator_block(in_filters, out_filters, normalize=True):
             block = [nn.Conv2d(in_filters, out_filters, 3, 2, 1), nn.LeakyReLU(0.2, inplace=True), nn.Dropout2d(0.25)]
             if normalize:
@@ -418,42 +420,49 @@ class DCGAN_SIMPLE_Discriminator(nn.Module):
             return block
 
         layers = [*discriminator_block(self.shape[0], nconv_fc, normalize=False)]
-        for i in range(self.nconv_layer-1):
+        for i in range(self.nconv_layer - 1):
             layers.extend(discriminator_block(self.nconv_fc * 2 ** (i), self.nconv_fc * 2 ** (i + 1)))
-      
-        layers.extend([Reshape((nconv_lc * self.ds_size ** 2,)), nn.Linear(nconv_lc * self.ds_size ** 2, 1), nn.Sigmoid()])
+
+        layers.extend(
+            [Reshape((nconv_lc * self.ds_size ** 2,)), nn.Linear(nconv_lc * self.ds_size ** 2, 1), nn.Sigmoid()])
         self.model = nn.Sequential(*layers)
 
     def forward(self, img):
         if img.is_cuda and self.ngpu > 1:
             ret = nn.parallel.data_parallel(self.model, img, range(self.ngpu))
         else:
-            ret = self.model(img) 
+            ret = self.model(img)
         return ret
 
 
 class DCGAN(DCGAN_SIMPLE):
     def __init__(self, identifier, shape, latent_dim, output_path=None, experiment_path=None, cuda=False, ngpu=1,
-                 nconv_layer_gen=2, nconv_layer_disc=2, nconv_fcgen=32, nconv_fcdis=32, kernal_size=5, stride=2, padding=2, output_padding=1):
+                 nconv_layer_gen=2, nconv_layer_disc=2, nconv_fcgen=32, nconv_fcdis=32, kernal_size=5, stride=2,
+                 padding=2, output_padding=1):
         super().__init__(identifier, shape, latent_dim, output_path=output_path, experiment_path=experiment_path,
                          cuda=cuda, ngpu=ngpu, nconv_layer_gen=nconv_layer_gen, nconv_layer_disc=nconv_layer_disc,
                          nconv_fcgen=nconv_fcgen, nconv_fcdis=nconv_fcdis)
 
-        self.model_params.update({"nconv_layer_gen":self.nconv_layer_gen, "nconv_layer_disc":self.nconv_layer_disc, 
-                "nconv_fcgen":self.nconv_fcgen, "nconv_fcdis":self.nconv_fcdis, "kernal_size":kernal_size, 
-                "stride":stride, "padding":padding, "output_padding":output_padding})
+        self.model_params.update({"nconv_layer_gen": self.nconv_layer_gen, "nconv_layer_disc": self.nconv_layer_disc,
+                                  "nconv_fcgen": self.nconv_fcgen, "nconv_fcdis": self.nconv_fcdis,
+                                  "kernal_size": kernal_size,
+                                  "stride": stride, "padding": padding, "output_padding": output_padding})
 
         self.generator = DCGAN_Generator(shape, latent_dim, nconv_layer=self.nconv_layer_gen, nconv_fc=self.nconv_fcgen,
-                ngpu=self.ngpu, kernal_size=kernal_size, stride=stride, padding=padding, output_padding=output_padding).to(device=self.device)
+                                         ngpu=self.ngpu, kernal_size=kernal_size, stride=stride, padding=padding,
+                                         output_padding=output_padding).to(device=self.device)
         self.discriminator = DCGAN_Discriminator(shape, nconv_layer=self.nconv_layer_disc, nconv_fc=self.nconv_fcdis,
-                ngpu=self.ngpu, kernal_size=kernal_size, stride=stride, padding=padding).to(device=self.device)
+                                                 ngpu=self.ngpu, kernal_size=kernal_size, stride=stride,
+                                                 padding=padding).to(device=self.device)
 
         # Initialize weights
         self.generator.apply(self._weights_init_normal)
         self.discriminator.apply(self._weights_init_normal)
 
+
 class DCGAN_Generator(nn.Module):
-    def __init__(self, shape, latent_dim, nconv_layer=2, nconv_fc=32, ngpu=1, kernal_size=5, stride=2, padding=2, output_padding=1):
+    def __init__(self, shape, latent_dim, nconv_layer=2, nconv_fc=32, ngpu=1, kernal_size=5, stride=2, padding=2,
+                 output_padding=1):
         super().__init__()
 
         self.shape = shape
@@ -466,14 +475,14 @@ class DCGAN_Generator(nn.Module):
         self.padding = padding
         self.output_padding = output_padding
         self.ds_size = shape[-1] // self.stride ** (self.nconv_layer)
-        nconv_lc = nconv_fc * self.stride ** (self.nconv_layer-1)
+        nconv_lc = nconv_fc * self.stride ** (self.nconv_layer - 1)
 
-        
         def _get_conv_layers(nconv_layer, nconv_lc):
             conv_layers = []
-            for i in range(nconv_layer-1):
-                conv_layers.extend([nn.ConvTranspose2d(nconv_lc // self.stride ** i, nconv_lc // self.stride ** (i + 1), 
-                    self.kernal_size, stride=self.stride, padding=self.padding, output_padding=self.output_padding),
+            for i in range(nconv_layer - 1):
+                conv_layers.extend([nn.ConvTranspose2d(nconv_lc // self.stride ** i, nconv_lc // self.stride ** (i + 1),
+                                                       self.kernal_size, stride=self.stride, padding=self.padding,
+                                                       output_padding=self.output_padding),
                                     nn.BatchNorm2d(nconv_lc // self.stride ** (i + 1)),
                                     nn.LeakyReLU(0.2, inplace=True)])
             return conv_layers
@@ -485,8 +494,9 @@ class DCGAN_Generator(nn.Module):
 
         layers.extend(_get_conv_layers(self.nconv_layer, nconv_lc))
 
-        layers.extend([nn.ConvTranspose2d(self.nconv_fc, self.shape[0], self.kernal_size, stride=self.stride, padding=self.padding,
-            output_padding=output_padding), nn.Tanh()])
+        layers.extend([nn.ConvTranspose2d(self.nconv_fc, self.shape[0], self.kernal_size, stride=self.stride,
+                                          padding=self.padding,
+                                          output_padding=output_padding), nn.Tanh()])
 
         self.model = nn.Sequential(*layers)
 
@@ -504,13 +514,14 @@ class DCGAN_Discriminator(nn.Module):
         self.shape = shape
         self.ngpu = ngpu
         self.nconv_layer = nconv_layer
-        self.nconv_fc = nconv_fc 
+        self.nconv_fc = nconv_fc
         self.kernal_size = kernal_size
-        self.stride = stride 
+        self.stride = stride
         self.padding = padding
         self.ds_size = shape[-1] // self.stride ** (self.nconv_layer)
-        
-        nconv_lc = nconv_fc * self.stride ** (self.nconv_layer-1)
+
+        nconv_lc = nconv_fc * self.stride ** (self.nconv_layer - 1)
+
         def discriminator_block(in_filters, out_filters, normalize=True):
             block = [nn.Conv2d(in_filters, out_filters, self.kernal_size, stride=self.stride, padding=self.padding)]
             if normalize:
@@ -519,18 +530,22 @@ class DCGAN_Discriminator(nn.Module):
             return block
 
         layers = [*discriminator_block(self.shape[0], nconv_fc, normalize=False)]
-        for i in range(self.nconv_layer-1):
-            layers.extend(discriminator_block(self.nconv_fc * self.stride ** (i), self.nconv_fc * self.stride ** (i + 1)))
-      
-        layers.extend([Reshape((nconv_lc * self.ds_size ** 2,)), nn.Linear(nconv_lc * self.ds_size ** 2, 1), nn.Sigmoid()])
+        for i in range(self.nconv_layer - 1):
+            layers.extend(
+                discriminator_block(self.nconv_fc * self.stride ** (i), self.nconv_fc * self.stride ** (i + 1)))
+
+        layers.extend(
+            [Reshape((nconv_lc * self.ds_size ** 2,)), nn.Linear(nconv_lc * self.ds_size ** 2, 1), nn.Sigmoid()])
         self.model = nn.Sequential(*layers)
 
     def forward(self, img):
         if img.is_cuda and self.ngpu > 1:
             ret = nn.parallel.data_parallel(self.model, img, range(self.ngpu))
         else:
-            ret = self.model(img) 
+            ret = self.model(img)
         return ret
+
+
 class Reshape(nn.Module):
     def __init__(self, shape):
         super(Reshape, self).__init__()

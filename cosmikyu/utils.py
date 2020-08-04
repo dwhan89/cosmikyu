@@ -3,10 +3,10 @@ def create_dict(*idxes):
         create nested dictionary with the given idxes
     '''
 
-    height  = len(idxes)
+    height = len(idxes)
     output = {}
 
-    stack  = []
+    stack = []
     stack.append(output)
 
     for depth in range(height):
@@ -20,7 +20,7 @@ def create_dict(*idxes):
 
     return output
 
-        
+
 def str2bool(v):
     if v.lower() in ('yes', 'true', 't', 'y', '1'):
         return True

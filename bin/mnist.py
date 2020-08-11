@@ -1,14 +1,9 @@
-from cosmikyu import visualization as covis
 from cosmikyu import gan, config
-import numpy as np
 import os
 import torchvision.transforms as transforms
 from torchvision import datasets
-from torchvision.utils import save_image
-import matplotlib.pyplot as plt
 import torch
 import mlflow
-import sys
 
 data_dir = config.default_data_dir
 mnist_dir = os.path.join(data_dir, 'mnist')

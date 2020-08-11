@@ -16,7 +16,7 @@ sample_interval = 200
 save_interval = 782
 batch_size = 128
 nepochs = 50
-norm_info_file = "/home/dwhan89/workspace/cosmikyu/data/sehgal/normalization_info.npz"
+norm_info_file = "/home/dwhan89/workspace/cosmikyu/data/sehgal/normalization_info_full.npz"
 
 _, wcs = maps.rect_geometry(width_arcmin=64., px_res_arcmin=0.5)
 

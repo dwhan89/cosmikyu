@@ -625,10 +625,10 @@ class Reshape(nn.Module):
 
 
 class COSMOGAN(DCGAN):
-    def __init__(self, identifier, shape, latent_dim, p_fliplabel=0., output_path=None, experiment_path=None,
+    def __init__(self, identifier, shape, latent_dim, output_path=None, experiment_path=None,
                  cuda=False, nconv_fcgen=64,
                  nconv_fcdis=64, ngpu=1):
-        super().__init__(identifier, shape, latent_dim, p_fliplabel=p_fliplabel, output_path=output_path,
+        super().__init__(identifier, shape, latent_dim,  output_path=output_path,
                          experiment_path=experiment_path,
                          cuda=cuda, ngpu=ngpu, nconv_layer_gen=4, nconv_layer_disc=4,
                          nconv_fcgen=nconv_fcgen, nconv_fcdis=nconv_fcdis, kernal_size=5, stride=2, padding=2,
@@ -636,10 +636,10 @@ class COSMOGAN(DCGAN):
 
 
 class COSMOGAN_WGP(DCGAN_WGP):
-    def __init__(self, identifier, shape, latent_dim, p_fliplabel=0., output_path=None, experiment_path=None,
+    def __init__(self, identifier, shape, latent_dim, output_path=None, experiment_path=None,
                  cuda=False, nconv_fcgen=64,
                  nconv_fcdis=64, ngpu=1):
-        super().__init__(identifier, shape, latent_dim, p_fliplabel=p_fliplabel, output_path=output_path,
+        super().__init__(identifier, shape, latent_dim,  output_path=output_path,
                          experiment_path=experiment_path,
                          cuda=cuda, ngpu=ngpu, nconv_layer_gen=4, nconv_layer_disc=4,
                          nconv_fcgen=nconv_fcgen, nconv_fcdis=nconv_fcdis, kernal_size=5, stride=2, padding=2,

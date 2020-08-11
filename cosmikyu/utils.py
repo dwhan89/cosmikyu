@@ -1,13 +1,11 @@
 def create_dict(*idxes):
-    '''
+    """
         create nested dictionary with the given idxes
-    '''
+    """
 
     height = len(idxes)
     output = {}
-
-    stack = []
-    stack.append(output)
+    stack = [output]
 
     for depth in range(height):
         stack_temp = []

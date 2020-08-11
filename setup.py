@@ -3,15 +3,6 @@
 
 """The setup script."""
 
-import os
-import subprocess as sp
-import sys
-from distutils.errors import DistutilsError
-from distutils.sysconfig import get_config_var, get_config_vars
-
-import numpy as np
-import setuptools
-import versioneer
 from numpy.distutils.core import setup, Extension, build_ext, build_src
 
 build_ext = build_ext.build_ext
@@ -36,7 +27,8 @@ setup(
                       "pixell",
                       "scipy",
                       "mpi4py",
-                      "lmdb"
+                      "lmdb",
+                      "mlflow"
                       ],
     license="Apache LICENSE-2.0",
     keywords='cosmikyu',

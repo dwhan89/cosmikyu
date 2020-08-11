@@ -36,7 +36,7 @@ setup(
                       "pixell",
                       "scipy",
                       "mpi4py",
-                      "pandas",
+                      "lmdb"
                       ],
     license="Apache LICENSE-2.0",
     keywords='cosmikyu',

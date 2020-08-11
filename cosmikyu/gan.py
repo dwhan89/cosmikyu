@@ -14,12 +14,13 @@ import mlflow.pytorch
 
 
 class GAN(object):
-    def __init__(self, identifier, shape, latent_dim, output_path=None, experiment_path=None, cuda=False, ngpu=1):
+    def __init__(self, identifier, shape, latent_dim, p_fliplabel=0., output_path=None, experiment_path=None, cuda=False, ngpu=1):
         self.cuda = cuda
         self.ngpu = 0 if not self.cuda else ngpu
         self.shape = shape
         self.latent_dim = latent_dim
         self.identifier = identifier
+        self.p_fliplabel = p_fliplabel
 
         self.output_path = output_path or os.path.join(config.default_output_dir)
         self.tracking_path = os.path.join(self.output_path, "mlruns")
@@ -35,7 +36,7 @@ class GAN(object):
         self.generator = None
         self.discriminator = None
 
-        self.model_params = {"shape": shape, "latent_dim": latent_dim}
+        self.model_params = {"shape": shape, "latent_dim": latent_dim, "p_fliplabel": p_fliplabel}
         self.Tensor = torch.cuda.FloatTensor if self.cuda else torch.FloatTensor
 
     def load_states(self, output_path, mlflow_run=None):
@@ -81,6 +82,9 @@ class GAN(object):
             np.random.seed(seed)
         return Variable(self.Tensor(np.random.normal(0, 1, (nbatch, self.latent_dim))))
 
+    def _flip_label(self):
+        return np.random.uniform(0,1) < self.p_fliplabel
+
     def generate_samples(self, nbatch, seed=None):
         z = self._get_latent_vector(nbatch, seed)
         return self.generator(z).detach()
@@ -107,7 +111,6 @@ class GAN(object):
 
         # Get Optimizers
         opt_gen, opt_disc = self._get_optimizers(**kwargs)
-
         batches_done = 0
         for epoch in range(nepochs):
             for i, sample in enumerate(dataloader):
@@ -147,7 +150,11 @@ class GAN(object):
                               )
 
                 if batches_done % sample_interval == 0:
-                    save_image(gen_imgs.data[:5], os.path.join(artifacts_path, "%d.png" % batches_done), normalize=True)
+                    pass
+                    #temp = real_imgs.data[:5,0,...]
+                    temp = torch.cat((real_imgs.data[:1], gen_imgs.data[:5]), 0)
+                    temp = temp if gen_imgs.shape[-3] < 4 else torch.unsqueeze(torch.sum(temp,1),1)
+                    save_image(temp, os.path.join(artifacts_path, "%d.png" % batches_done), normalize=True, nrow=int(temp.shape[0]/2.))
                 if batches_done % save_interval == 0 and save_states:
                     self.save_states(model_path)
                 batches_done += 1
@@ -159,8 +166,8 @@ class GAN(object):
 
 
 class WGAN(GAN):
-    def __init__(self, identifier, shape, latent_dim, output_path=None, experiment_path=None, cuda=False, ngpu=1):
-        super().__init__(identifier, shape, latent_dim, output_path=output_path, experiment_path=experiment_path,
+    def __init__(self, identifier, shape, latent_dim, p_fliplabel=0.,output_path=None, experiment_path=None, cuda=False, ngpu=1):
+        super().__init__(identifier, shape, latent_dim, p_fliplabel=p_fliplabel, output_path=output_path, experiment_path=experiment_path,
                          cuda=cuda, ngpu=ngpu)
 
         self.generator = WGAN_Generator(shape, latent_dim, ngpu=self.ngpu).to(device=self.device)
@@ -181,7 +188,8 @@ class WGAN(GAN):
         return -torch.mean(self.discriminator(gen_imgs))
 
     def _eval_discriminator_loss(self, real_imgs, gen_imgs, **kwargs):
-        return -torch.mean(self.discriminator(real_imgs)) + torch.mean(self.discriminator(gen_imgs))
+        ret = -torch.mean(self.discriminator(real_imgs)) + torch.mean(self.discriminator(gen_imgs))
+        return -1*ret if self._flip_label() else ret 
 
     def train(self, dataloader, nepochs=200, ncritics=5, sample_interval=1000,
               save_interval=10000, load_states=True, save_states=True, verbose=True, mlflow_run=None, lr=0.00005,
@@ -193,8 +201,8 @@ class WGAN(GAN):
 
 
 class WGAN_GP(GAN):
-    def __init__(self, identifier, shape, latent_dim, output_path=None, experiment_path=None, cuda=False, ngpu=1):
-        super().__init__(identifier, shape, latent_dim, output_path=output_path, experiment_path=experiment_path,
+    def __init__(self, identifier, shape, latent_dim, p_fliplabel=0., output_path=None, experiment_path=None, cuda=False, ngpu=1):
+        super().__init__(identifier, shape, latent_dim, p_fliplabel=p_fliplabel, output_path=output_path, experiment_path=experiment_path,
                          cuda=cuda, ngpu=ngpu)
 
         self.generator = WGAN_Generator(shape, latent_dim, ngpu=self.ngpu).to(device=self.device)
@@ -229,8 +237,9 @@ class WGAN_GP(GAN):
         )[0]
         gradients = gradients.view(gradients.size(0), -1)
         GP = ((gradients.norm(2, dim=1) - 1) ** 2).mean()
-        return -torch.mean(self.discriminator(real_imgs)) + torch.mean(self.discriminator(gen_imgs)) + kwargs[
+        ret = -torch.mean(self.discriminator(real_imgs)) + torch.mean(self.discriminator(gen_imgs)) + kwargs[
             'lambda_gp'] * GP
+        return -1*ret if self._flip_label() else ret 
 
     def train(self, dataloader, nepochs=200, ncritics=5, sample_interval=1000,
               save_interval=10000, load_states=True, save_states=True, verbose=True, mlflow_run=None, lr=0.0002,
@@ -297,9 +306,9 @@ class WGAN_Discriminator(nn.Module):
 
 
 class DCGAN_SIMPLE(GAN):
-    def __init__(self, identifier, shape, latent_dim, output_path=None, experiment_path=None, cuda=False, ngpu=1,
+    def __init__(self, identifier, shape, latent_dim, p_fliplabel=0., output_path=None, experiment_path=None, cuda=False, ngpu=1,
                  nconv_layer_gen=2, nconv_layer_disc=2, nconv_fcgen=32, nconv_fcdis=32):
-        super().__init__(identifier, shape, latent_dim, output_path=output_path, experiment_path=experiment_path,
+        super().__init__(identifier, shape, latent_dim, p_fliplabel=0., output_path=output_path, experiment_path=experiment_path,
                          cuda=cuda, ngpu=ngpu)
 
         self.nconv_layer_gen = nconv_layer_gen
@@ -347,18 +356,20 @@ class DCGAN_SIMPLE(GAN):
     def _eval_discriminator_loss(self, real_imgs, gen_imgs, **kwargs):
         valid = Variable(self.Tensor(real_imgs.shape[0], 1).fill_(1.0), requires_grad=False)
         fake = Variable(self.Tensor(real_imgs.shape[0], 1).fill_(0.0), requires_grad=False)
-        real_loss = self.adversarial_loss(self.discriminator(real_imgs), valid)
-        fake_loss = self.adversarial_loss(self.discriminator(gen_imgs), fake)
+        labels = (fake, valid) if self._flip_label() else (valid, fake)
+        
+        real_loss = self.adversarial_loss(self.discriminator(real_imgs), labels[0])
+        fake_loss = self.adversarial_loss(self.discriminator(gen_imgs), labels[1])
         return (real_loss + fake_loss) / 2
 
     def train(self, dataloader, nepochs=200, ncritics=5, sample_interval=1000,
               save_interval=10000, load_states=True, save_states=True, verbose=True, mlflow_run=None, lr=0.0002,
-              betas=(0.5, 0.999)):
+              betas=(0.5, 0.999), **kwargs):
 
         super().train(dataloader, nepochs=nepochs, ncritics=ncritics, sample_interval=sample_interval,
                       save_interval=save_interval, load_states=load_states, save_states=save_states, verbose=verbose,
                       mlflow_run=mlflow_run,
-                      lr=lr, betas=betas)
+                      lr=lr, betas=betas, **kwargs)
 
 
 class DCGAN_SIMPLE_Generator(nn.Module):
@@ -436,10 +447,10 @@ class DCGAN_SIMPLE_Discriminator(nn.Module):
 
 
 class DCGAN(DCGAN_SIMPLE):
-    def __init__(self, identifier, shape, latent_dim, output_path=None, experiment_path=None, cuda=False, ngpu=1,
+    def __init__(self, identifier, shape, latent_dim, p_fliplabel=0.,output_path=None, experiment_path=None, cuda=False, ngpu=1,
                  nconv_layer_gen=2, nconv_layer_disc=2, nconv_fcgen=32, nconv_fcdis=32, kernal_size=5, stride=2,
                  padding=2, output_padding=1):
-        super().__init__(identifier, shape, latent_dim, output_path=output_path, experiment_path=experiment_path,
+        super().__init__(identifier, shape, latent_dim, p_fliplabel=p_fliplabel, output_path=output_path, experiment_path=experiment_path,
                          cuda=cuda, ngpu=ngpu, nconv_layer_gen=nconv_layer_gen, nconv_layer_disc=nconv_layer_disc,
                          nconv_fcgen=nconv_fcgen, nconv_fcdis=nconv_fcdis)
 
@@ -458,6 +469,58 @@ class DCGAN(DCGAN_SIMPLE):
         # Initialize weights
         self.generator.apply(self._weights_init_normal)
         self.discriminator.apply(self._weights_init_normal)
+
+
+class DCGAN_WGP(DCGAN):
+    def __init__(self, identifier, shape, latent_dim, p_fliplabel=0.,output_path=None, experiment_path=None, cuda=False, ngpu=1,
+                 nconv_layer_gen=2, nconv_layer_disc=2, nconv_fcgen=32, nconv_fcdis=32, kernal_size=5, stride=2,
+                 padding=2, output_padding=1):
+        super().__init__(identifier, shape, latent_dim, p_fliplabel=p_fliplabel, output_path=output_path, experiment_path=experiment_path,
+                         cuda=cuda, ngpu=ngpu, nconv_layer_gen=nconv_layer_gen, nconv_layer_disc=nconv_layer_disc,
+                         nconv_fcgen=nconv_fcgen, nconv_fcdis=nconv_fcdis, kernal_size=kernal_size, stride=stride, padding=padding, 
+                         output_padding=output_padding)
+        
+        del self.discriminator
+        self.discriminator = DCGAN_Discriminator(shape, nconv_layer=self.nconv_layer_disc, nconv_fc=self.nconv_fcdis,
+                                                 ngpu=self.ngpu, kernal_size=kernal_size, stride=stride,
+                                                 padding=padding, normalize=False).to(device=self.device)
+    
+    def _eval_generator_loss(self, real_imgs, gen_imgs):
+        return -torch.mean(self.discriminator(gen_imgs))
+
+    def _eval_discriminator_loss(self, real_imgs, gen_imgs, **kwargs):
+        # determine the interpolation point 
+        eps = self.Tensor(np.random.random((real_imgs.data.size(0), 1, 1, 1)))
+        interp_data = (eps * real_imgs.data + ((1 - eps) * gen_imgs.data)).requires_grad_(True)
+        disc_interp = self.discriminator(interp_data)
+        storage = Variable(self.Tensor(real_imgs.data.shape[0], 1).fill_(1.0), requires_grad=False)
+        # compute gradient w.r.t. interpolates
+        gradients = autograd.grad(
+            outputs=disc_interp,
+            inputs=interp_data,
+            grad_outputs=storage,
+            create_graph=True,
+            retain_graph=True,
+            only_inputs=True,
+        )[0]
+        gradients = gradients.view(gradients.size(0), -1)
+        GP = ((gradients.norm(2, dim=1) - 1) ** 2).mean()
+        ret = -torch.mean(self.discriminator(real_imgs)) + torch.mean(self.discriminator(gen_imgs)) + kwargs[
+            'lambda_gp'] * GP
+        return -1*ret if self._flip_label() else ret 
+        # Initialize weights
+        self.generator.apply(self._weights_init_normal)
+        self.discriminator.apply(self._weights_init_normal)
+
+    def train(self, dataloader, nepochs=200, ncritics=5, sample_interval=1000,
+              save_interval=10000, load_states=True, save_states=True, verbose=True, mlflow_run=None, lr=0.0002,
+              betas=(0.5, 0.999), lambda_gp=10):
+
+        super().train(dataloader, nepochs=nepochs, ncritics=ncritics, sample_interval=sample_interval,
+                      save_interval=save_interval, load_states=load_states, save_states=save_states, verbose=verbose,
+                      mlflow_run=mlflow_run,
+                      lr=lr, betas=betas, lambda_gp=lambda_gp)
+
 
 
 class DCGAN_Generator(nn.Module):
@@ -509,7 +572,7 @@ class DCGAN_Generator(nn.Module):
 
 
 class DCGAN_Discriminator(nn.Module):
-    def __init__(self, shape, nconv_layer=2, nconv_fc=32, ngpu=1, kernal_size=5, stride=2, padding=2):
+    def __init__(self, shape, nconv_layer=2, nconv_fc=32, ngpu=1, kernal_size=5, stride=2, padding=2, normalize=True):
         super().__init__()
         self.shape = shape
         self.ngpu = ngpu
@@ -532,10 +595,10 @@ class DCGAN_Discriminator(nn.Module):
         layers = [*discriminator_block(self.shape[0], nconv_fc, normalize=False)]
         for i in range(self.nconv_layer - 1):
             layers.extend(
-                discriminator_block(self.nconv_fc * self.stride ** (i), self.nconv_fc * self.stride ** (i + 1)))
+                discriminator_block(self.nconv_fc * self.stride ** (i), self.nconv_fc * self.stride ** (i + 1), normalize=normalize))
 
         layers.extend(
-            [Reshape((nconv_lc * self.ds_size ** 2,)), nn.Linear(nconv_lc * self.ds_size ** 2, 1), nn.Sigmoid()])
+            [Reshape((nconv_lc * self.ds_size ** 2,)), nn.Linear(nconv_lc * self.ds_size ** 2, 1)])#, nn.Sigmoid()])
         self.model = nn.Sequential(*layers)
 
     def forward(self, img):
@@ -545,18 +608,24 @@ class DCGAN_Discriminator(nn.Module):
             ret = self.model(img)
         return ret
 
-
 class Reshape(nn.Module):
     def __init__(self, shape):
         super(Reshape, self).__init__()
         self.shape = shape
-
     def forward(self, x):
         return x.view(x.shape[0], *self.shape)
 
 
 class COSMOGAN(DCGAN):
-    def __init__(self, identifier, shape, latent_dim, output_path=None, experiment_path=None, cuda=False, ngpu=1):
-        super().__init__(identifier, shape, latent_dim, output_path=output_path, experiment_path=experiment_path,
+    def __init__(self, identifier, shape, latent_dim, p_fliplabel=0., output_path=None, experiment_path=None, cuda=False, nconv_fcgen=64,
+            nconv_fcdis=64, ngpu=1):
+        super().__init__(identifier, shape, latent_dim, p_fliplabel=p_fliplabel, output_path=output_path, experiment_path=experiment_path,
                          cuda=cuda, ngpu=ngpu, nconv_layer_gen=4, nconv_layer_disc=4,
-                         nconv_fcgen=64, nconv_fcdis=64, kernal_size=5, stride=2, padding=2, output_padding=1)
+                         nconv_fcgen=nconv_fcgen, nconv_fcdis=nconv_fcdis, kernal_size=5, stride=2, padding=2, output_padding=1)
+
+class COSMOGAN_WGP(DCGAN_WGP):
+    def __init__(self, identifier, shape, latent_dim, p_fliplabel=0., output_path=None, experiment_path=None, cuda=False, nconv_fcgen=64,
+            nconv_fcdis=64, ngpu=1):
+        super().__init__(identifier, shape, latent_dim, p_fliplabel=p_fliplabel, output_path=output_path, experiment_path=experiment_path,
+                         cuda=cuda, ngpu=ngpu, nconv_layer_gen=4, nconv_layer_disc=4,
+                         nconv_fcgen=nconv_fcgen, nconv_fcdis=nconv_fcdis, kernal_size=5, stride=2, padding=2, output_padding=1)

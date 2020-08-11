@@ -4,7 +4,6 @@ pixell
 matplotlib
 seaborn
 versioneer 
-pandas
 torchvision
 visdom
 healpy

@@ -95,8 +95,7 @@ def taskrange(imax, imin=0, shift=0):
     if not isinstance(imin, int) or not isinstance(imax, int) or not isinstance(shift, int):
         raise TypeError("imin, imax and shift must be integers")
     elif not is_initialized():
-        print
-        "MPI is not yet properly initialized. Are you sure this is what you want to do?"
+        print("MPI is not yet properly initialized. Are you sure this is what you want to do?")
     else:
         pass
 
@@ -111,7 +110,7 @@ def taskrange(imax, imin=0, shift=0):
             delta = 1
             remainder = 0
         else:
-            delta = ntask / size
+            delta = ntask // size
             remainder = ntask % size
 
         # correction for remainder
@@ -141,7 +140,7 @@ def transfer_data(data, tag, dest=0, mode='append'):
 
     global rank, size, comm
 
-    senders = range(0, size)
+    senders = list(range(0, size))
     senders.pop(dest)
 
     if rank != dest:

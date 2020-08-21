@@ -40,12 +40,15 @@ class GAN(object):
         self.model_params = {"shape": shape, "latent_dim": latent_dim, "p_fliplabel": p_fliplabel}
         self.Tensor = torch.cuda.FloatTensor if self.cuda else torch.FloatTensor
 
-    def load_states(self, output_path, mlflow_run=None):
-        generator_state_file = os.path.join(output_path, "generator.pt")
-        discriminator_state_file = os.path.join(output_path, "discriminator.pt")
-
+    def load_states(self, output_path, postfix="", mlflow_run=None):
+        saving_point_tracker_file = os.path.join(output_path, "saving_point.txt")
+        if os.path.exists(saving_point_tracker_file) and not postfix:
+            with open(saving_point_tracker_file, "r") as handle:
+                postfix = handle.readline()
+        generator_state_file = os.path.join(output_path, "generator{}.pt".format(postfix))
+        discriminator_state_file = os.path.join(output_path, "discriminator{}.pt".format(postfix))
         try:
-            print("loading saved states")
+            print("loading saved states", postfix)
             if mlflow_run and False:
                 self.generator = mlflow.pytorch.load_model(generator_state_file)
                 self.discriminator = mlflow.pytorch.load_model(discriminator_state_file)
@@ -55,16 +58,21 @@ class GAN(object):
         except Exception:
             print("failed to load saved states")
 
-    def save_states(self, output_path, mlflow_run=None):
-        print("saving states")
-        generator_state_file = os.path.join(output_path, "generator.pt")
-        discriminator_state_file = os.path.join(output_path, "discriminator.pt")
+    def save_states(self, output_path, postfix="", mlflow_run=None):
+        postfix = "" if postfix == "" else "_{}".format(str(postfix)) 
+        print("saving states", postfix)
+        generator_state_file = os.path.join(output_path, "generator{}.pt".format(postfix))
+        discriminator_state_file = os.path.join(output_path, "discriminator{}.pt".format(postfix))
+        saving_point_tracker_file = os.path.join(output_path, "saving_point.txt")
+        with open(saving_point_tracker_file, "w") as handle:
+            handle.write(postfix)
         if mlflow_run and False:
             mlflow.pytorch.save_model(self.generator, generator_state_file)
             mlflow.pytorch.save_model(self.discriminator, discriminator_state_file)
         else:
             torch.save(self.generator.state_dict(), generator_state_file)
             torch.save(self.discriminator.state_dict(), discriminator_state_file)
+            
 
     def _get_optimizers(self, **kwargs):
         raise NotImplemented()
@@ -110,10 +118,13 @@ class GAN(object):
         if load_states:
             self.load_states(model_path)
 
+
+        self.save_states(model_path, 0)
         # Get Optimizers
         opt_gen, opt_disc = self._get_optimizers(**kwargs)
         batches_done = 0
-        for epoch in range(nepochs):
+        for epoch in range(nepochs): 
+
             for i, sample in enumerate(dataloader):
                 imgs = sample[0]
                 real_imgs = Variable(imgs.type(self.Tensor))
@@ -151,19 +162,19 @@ class GAN(object):
                               )
 
                 if batches_done % sample_interval == 0:
-                    pass
                     temp = torch.cat((real_imgs.data[:1], gen_imgs.data[:5]), 0)
                     temp = temp if gen_imgs.shape[-3] < 4 else torch.unsqueeze(torch.sum(temp, 1), 1)
                     save_image(temp, os.path.join(artifacts_path, "%d.png" % batches_done), normalize=True,
                                nrow=int(temp.shape[0] / 2.))
-                if batches_done % save_interval == 0 and save_states:
-                    self.save_states(model_path)
                 batches_done += 1
 
+
+            if int(epoch+1) % save_interval == 0 and save_states:
+                self.save_states(model_path, int(epoch+1))
         if mlflow_run:
             mlflow.log_artifacts(artifacts_path)
         if save_states:
-            self.save_states(model_path)
+            self.save_states(model_path, nepochs)
 
 
 class WGAN(GAN):
@@ -369,7 +380,7 @@ class DCGAN_SIMPLE(GAN):
         return (real_loss + fake_loss) / 2
 
     def train(self, dataloader, nepochs=200, ncritics=5, sample_interval=1000,
-              save_interval=10000, load_states=True, save_states=True, verbose=True, mlflow_run=None, lr=0.0002,
+              save_interval=5, load_states=True, save_states=True, verbose=True, mlflow_run=None, lr=0.0002,
               betas=(0.5, 0.999), **kwargs):
 
         super().train(dataloader, nepochs=nepochs, ncritics=ncritics, sample_interval=sample_interval,

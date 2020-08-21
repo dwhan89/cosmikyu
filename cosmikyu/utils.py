@@ -48,7 +48,32 @@ def create_dict(*idxes):
         stack = stack_temp
 
     return output
-
+def merge_dict(a, b, path=None, clean = True):
+    '''
+    merges b into a
+    ref: https://stackoverflow.com/questions/7204805/dictionaries-of-dictionaries-merge"
+    '''
+    if path is None: path = []
+    
+    for key in b:
+        if key in a:
+            if isinstance(a[key], dict):
+                if isinstance(b[key], dict):
+                    merge_dict(a[key], b[key], path + [str(key)])
+                else:
+                    a[key] = b[key]
+            elif isinstance(a[key], np.ndarray) and np.array_equal(a[key], b[key]):
+                pass
+            elif a[key] == b[key]:
+                pass # same leaf value
+            else:
+                raise Exception('Conflict at %s' % '.'.join(path + [str(key)]))
+        else:
+            a[key] = b[key]
+    
+    if clean: del b
+    
+    return a
 
 def str2bool(v):
     if v.lower() in ('yes', 'true', 't', 'y', '1'):

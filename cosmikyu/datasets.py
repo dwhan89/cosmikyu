@@ -6,10 +6,10 @@ import lmdb
 
 class SehgalDataSet(Dataset):
     def __init__(self, dataset_root, data_type="train", transforms=[], dummy_label=False):
-        assert (data_type in ["train", "test", "model"])
+        #assert (data_type in ["train", "test", "model"])
         self.dataset_root = dataset_root
         self.dataset_dir = os.path.join(self.dataset_root, "sehgal_{}".format(data_type))
-        self.lmdb_env = lmdb.open(self.dataset_dir, readonly=True)
+        self.lmdb_env = lmdb.open(self.dataset_dir, readonly=True, lock=False)
         self.shape = (5, 128, 128)  # fixed for now
         self.transforms = transforms
         self.dummy_label = dummy_label

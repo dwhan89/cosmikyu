@@ -107,7 +107,7 @@ class SehgalDataUnnormalizer(object):
             for i, channel_idx in enumerate(self.channel_idxes):
                 temp = self.norm_info[channel_idx]
                 zfact = temp["z_fact"] if zfact is None else zfact
-                self.z_normalizers[i] = ZNormalize(temp["mean"], temp["std"], zfact)
+                self.z_normalizers[i] = ZUnnormalize(temp["mean"], temp["std"], zfact)
         else:
             pass
 

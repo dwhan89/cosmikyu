@@ -13,10 +13,10 @@ shape = (len(compt_idxes), 128, 128)
 # shape = (1, 256, 256)
 latent_dim = 64
 sample_interval = 200
-save_interval = 782
-batch_size = 128
-nepochs = 50
-norm_info_file = "/home/dwhan89/workspace/cosmikyu/data/sehgal/normalization_info_full.npz"
+save_interval = 5
+batch_size = 256
+nepochs = 20
+norm_info_file = "/home/dwhan89/workspace/cosmikyu/data/sehgal/normalization_info_fullv3.npz"
 
 _, wcs = maps.rect_geometry(width_arcmin=64., px_res_arcmin=0.5)
 
@@ -27,7 +27,7 @@ SDN = transforms.SehgalDataNormalizer(norm_info_file, zfact=4)
 SC = transforms.SehgalSubcomponets(compt_idxes)
 # SUBS = transforms.UnBlockShape(shape)
 RF = transforms.RandomFlips(p_v=0.5, p_h=0.5)
-SDS_train = datasets.SehgalDataSet(sehgal_dir, data_type="train", transforms=[SDN, RF, SC], dummy_label=True)
+SDS_train = datasets.SehgalDataSet(sehgal_dir, data_type="trainv3", transforms=[SDN, RF, SC], dummy_label=True)
 
 dataloader = torch.utils.data.DataLoader(
     SDS_train,
@@ -35,6 +35,29 @@ dataloader = torch.utils.data.DataLoader(
     shuffle=True,
 )
 
+COSMOGAN_WGAP = gan.COSMOGAN_WGP("sehgal_cosmoganwgpv3", shape, latent_dim, cuda=cuda, ngpu=4)
+experiment_id = "148dca0bf8504dbfb988e97af047fc7c"
+model_dir = "/home/dwhan89/workspace/cosmikyu/output/sehgal_cosmoganwgpv3/{}/model".format(experiment_id)
+COSMOGAN_WGAP.load_states(model_dir)
+mlflow.set_experiment(COSMOGAN_WGAP.identifier)
+with mlflow.start_run(experiment_id=COSMOGAN_WGAP.experiment.experiment_id) as mlflow_run:
+    torch.cuda.empty_cache()
+    COSMOGAN_WGAP.train(
+        dataloader,
+        nepochs=nepochs,
+        ncritics=5,
+        sample_interval=sample_interval,
+        save_interval=save_interval,
+        load_states=True,
+        save_states=True,
+        verbose=True,
+        mlflow_run=mlflow_run,
+        lr=1e-04,
+        betas=(0.5, 0.999),
+        lambda_gp=10.
+    )
+
+sys.exit()    
 DCGAN_WGP = gan.DCGAN_WGP("sehgal_dcganwgp", shape, latent_dim, cuda=cuda, nconv_fcgen=128,
                           nconv_fcdis=128, ngpu=4, nconv_layer_gen=5, nconv_layer_disc=5, kernal_size=5, stride=2,
                           padding=2, output_padding=1)
@@ -57,26 +80,6 @@ with mlflow.start_run(experiment_id=DCGAN_WGP.experiment.experiment_id) as mlflo
     )
 
 sys.exit()
-COSMOGAN_WGAP = gan.COSMOGAN_WGP("sehgal_cosmoganwgp", shape, latent_dim, cuda=cuda, ngpu=4)
-COSMOGAN_WGAP.load_states(
-    "/home/dwhan89/workspace/cosmikyu/output/sehgal_cosmoganwgp/6803124a28554a13b4d9acdff40b5c97/model")
-mlflow.set_experiment(COSMOGAN_WGAP.identifier)
-with mlflow.start_run(experiment_id=COSMOGAN_WGAP.experiment.experiment_id) as mlflow_run:
-    torch.cuda.empty_cache()
-    COSMOGAN_WGAP.train(
-        dataloader,
-        nepochs=nepochs,
-        ncritics=5,
-        sample_interval=200,
-        save_interval=10000,
-        load_states=True,
-        save_states=True,
-        verbose=True,
-        mlflow_run=mlflow_run,
-        lr=2e-04,
-        betas=(0.5, 0.999),
-        lambda_gp=10.
-    )
 
 WGAN_GP = gan.WGAN_GP("sehgal_wgan_gp", shape, latent_dim, p_fliplabel=0., cuda=cuda, ngpu=4)
 mlflow.set_experiment(WGAN_GP.identifier)

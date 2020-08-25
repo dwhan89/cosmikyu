@@ -16,14 +16,17 @@ sample_interval = 200
 save_interval = 5
 batch_size = 256
 nepochs = 20
-norm_info_file = "/home/dwhan89/workspace/cosmikyu/data/sehgal/normalization_info_fullv3.npz"
+#norm_info_file = "/home/dwhan89/workspace/cosmikyu/data/sehgal/normalization_info_fullv3.npz"
+norm_info_file = "/home/dwhan89/workspace/cosmikyu/data/sehgal/082120_normalization_info_model.npz"
 
 _, wcs = maps.rect_geometry(width_arcmin=64., px_res_arcmin=0.5)
 
 # Configure data loader
 os.makedirs(data_dir, exist_ok=True)
 os.makedirs(sehgal_dir, exist_ok=True)
-SDN = transforms.SehgalDataNormalizer(norm_info_file, zfact=4)
+SDN = transforms.SehgalDataNormalizerLogMinMax(norm_info_file)
+#SDUN = transforms.SehgalDataUnnormalizerLogMinMax(norm_info_file)
+#SDN = transforms.SehgalDataNormalizer(norm_info_file, zfact=4)
 SC = transforms.SehgalSubcomponets(compt_idxes)
 # SUBS = transforms.UnBlockShape(shape)
 RF = transforms.RandomFlips(p_v=0.5, p_h=0.5)
@@ -35,24 +38,25 @@ dataloader = torch.utils.data.DataLoader(
     shuffle=True,
 )
 
-COSMOGAN_WGAP = gan.COSMOGAN_WGP("sehgal_cosmoganwgpv3", shape, latent_dim, cuda=cuda, ngpu=4)
-experiment_id = "148dca0bf8504dbfb988e97af047fc7c"
-model_dir = "/home/dwhan89/workspace/cosmikyu/output/sehgal_cosmoganwgpv3/{}/model".format(experiment_id)
-COSMOGAN_WGAP.load_states(model_dir)
+COSMOGAN_WGAP = gan.COSMOGAN_WGP("sehgal_cosmoganwgpv4", shape, latent_dim, cuda=cuda, ngpu=4)
+experiment_id = "662d65640b6d44369a15a48127471f21"#"cd0409bd82c04d75b22e66ffa38fb9b6"
+model_dir = "/home/dwhan89/workspace/cosmikyu/output/sehgal_cosmoganwgpv4/{}/model".format(experiment_id)
+print(model_dir)
+COSMOGAN_WGAP.load_states(model_dir, "_35")
 mlflow.set_experiment(COSMOGAN_WGAP.identifier)
 with mlflow.start_run(experiment_id=COSMOGAN_WGAP.experiment.experiment_id) as mlflow_run:
     torch.cuda.empty_cache()
     COSMOGAN_WGAP.train(
         dataloader,
         nepochs=nepochs,
-        ncritics=5,
+        ncritics=2,
         sample_interval=sample_interval,
         save_interval=save_interval,
         load_states=True,
         save_states=True,
         verbose=True,
         mlflow_run=mlflow_run,
-        lr=1e-04,
+        lr=2e-04,
         betas=(0.5, 0.999),
         lambda_gp=10.
     )
@@ -74,7 +78,7 @@ with mlflow.start_run(experiment_id=DCGAN_WGP.experiment.experiment_id) as mlflo
         save_states=True,
         verbose=True,
         mlflow_run=mlflow_run,
-        lr=2e-04,
+        lr=5e-05,
         betas=(0.5, 0.999),
         lambda_gp=10.
     )

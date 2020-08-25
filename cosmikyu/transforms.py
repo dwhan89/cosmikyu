@@ -1,9 +1,49 @@
 import numpy as np
 from pixell import enmap
 from orphics import maps as omaps
+from . import utils
 
+class SehgalDataNormalizerLogMinMax(object):
+    def __init__(self, normalization_info_file, log_norm_skip = [0,1]):
+        temp = np.load(normalization_info_file, allow_pickle=True)
+        self.norm_info = utils.load_data(normalization_info_file) 
+        self.channel_idxes = ["kappa", "ksz", "tsz", "ir_pts", "rad_pts"]
+        self.nchannel = len(self.channel_idxes)
+        self.log_normalizer = ToLogScale() 
+        self.minmax_normalizers = [None] * self.nchannel
+        self.log_norm_skip = log_norm_skip
+        for i, channel_idx in enumerate(self.channel_idxes):
+            temp = self.norm_info[channel_idx]
+            self.minmax_normalizers[i] = MinMaxNormalize(temp["mean"], temp["min"], temp["max"])
 
-class SehgalDataNormalizer(object):
+    def __call__(self, sample):
+        assert (len(sample.shape) == 3)
+        for i in range(self.nchannel):
+            if i not in self.log_norm_skip: sample[i] = self.log_normalizer(sample[i,...])
+            sample[i] = self.minmax_normalizers[i](sample[i, ...])
+        return sample
+
+class SehgalDataUnnormalizerLogMinMax(object):
+    def __init__(self, normalization_info_file, log_norm_skip = [0,1]):
+        temp = np.load(normalization_info_file, allow_pickle=True)
+        self.norm_info = utils.load_data(normalization_info_file) 
+        self.channel_idxes = ["kappa", "ksz", "tsz", "ir_pts", "rad_pts"]
+        self.nchannel = len(self.channel_idxes)
+        self.log_unnormalizer = FromLogScale() 
+        self.minmax_unnormalizers = [None] * self.nchannel
+        self.log_norm_skip = log_norm_skip
+        for i, channel_idx in enumerate(self.channel_idxes):
+            temp = self.norm_info[channel_idx]
+            self.minmax_unnormalizers[i] = MinMaxUnnormalize(temp["mean"], temp["min"], temp["max"])
+
+    def __call__(self, sample):
+        assert (len(sample.shape) == 3) 
+        for i in range(self.nchannel):
+            sample[i] = self.minmax_unnormalizers[i](sample[i, ...])
+            if i not in self.log_norm_skip: sample[i] = self.log_unnormalizer(sample[i, ...])
+        return sample
+
+class SehgalDataNormalizerPowZ(object):
     def __init__(self, normalization_info_file, zfact=2, power_normalize=True, z_normalize=True):
         temp = np.load(normalization_info_file, allow_pickle=True)
         self.norm_info = {key: temp[key].item() for key in temp}
@@ -35,6 +75,38 @@ class SehgalDataNormalizer(object):
             if self.z_normalize: sample[i] = self.z_normalizers[i](sample[i, ...])
         return sample
 
+
+class SehgalDataUnnormalizerPowZ(object):
+    def __init__(self, normalization_info_file, zfact=2, power_normalize=True, z_normalize=True):
+        temp = np.load(normalization_info_file, allow_pickle=True)
+        self.norm_info = {key: temp[key].item() for key in temp}
+        self.power_normalize = power_normalize
+        self.z_normalize = z_normalize
+        self.channel_idxes = ["kappa", "ksz", "tsz", "ir_pts", "rad_pts"]
+        self.nchannel = len(self.channel_idxes)
+        self.power_normalizers = [None] * self.nchannel
+        self.z_normalizers = [None] * self.nchannel
+
+        if self.power_normalize:
+            for i, channel_idx in enumerate(self.channel_idxes):
+                temp = self.norm_info[channel_idx]
+                self.power_normalizers[i] = PowerUnnormalize(temp["pow_neg"], temp["pow_pos"])
+        else:
+            pass
+        if self.z_normalize:
+            for i, channel_idx in enumerate(self.channel_idxes):
+                temp = self.norm_info[channel_idx]
+                zfact = temp["z_fact"] if zfact is None else zfact
+                self.z_normalizers[i] = ZUnnormalize(temp["mean"], temp["std"], zfact)
+        else:
+            pass
+
+    def __call__(self, sample):
+        assert (len(sample.shape) == 3)
+        for i in range(self.nchannel):
+            if self.z_normalize: sample[i] = self.z_normalizers[i](sample[i, ...])
+            if self.power_normalize: sample[i] = self.power_normalizers[i](sample[i, ...])
+        return sample
 
 class SehgalSubcomponets(object):
     def __init__(self, idxes=None):
@@ -86,38 +158,6 @@ class RandomFlips(object):
         return sample
 
 
-class SehgalDataUnnormalizer(object):
-    def __init__(self, normalization_info_file, zfact=2, power_normalize=True, z_normalize=True):
-        temp = np.load(normalization_info_file, allow_pickle=True)
-        self.norm_info = {key: temp[key].item() for key in temp}
-        self.power_normalize = power_normalize
-        self.z_normalize = z_normalize
-        self.channel_idxes = ["kappa", "ksz", "tsz", "ir_pts", "rad_pts"]
-        self.nchannel = len(self.channel_idxes)
-        self.power_normalizers = [None] * self.nchannel
-        self.z_normalizers = [None] * self.nchannel
-
-        if self.power_normalize:
-            for i, channel_idx in enumerate(self.channel_idxes):
-                temp = self.norm_info[channel_idx]
-                self.power_normalizers[i] = PowerUnnormalize(temp["pow_neg"], temp["pow_pos"])
-        else:
-            pass
-        if self.z_normalize:
-            for i, channel_idx in enumerate(self.channel_idxes):
-                temp = self.norm_info[channel_idx]
-                zfact = temp["z_fact"] if zfact is None else zfact
-                self.z_normalizers[i] = ZUnnormalize(temp["mean"], temp["std"], zfact)
-        else:
-            pass
-
-    def __call__(self, sample):
-        assert (len(sample.shape) == 3)
-        for i in range(self.nchannel):
-            if self.z_normalize: sample[i] = self.z_normalizers[i](sample[i, ...])
-            if self.power_normalize: sample[i] = self.power_normalizers[i](sample[i, ...])
-        return sample
-
 
 class PowerNormalize(object):
     def __init__(self, pow_neg, pow_pos):
@@ -155,14 +195,36 @@ class ZUnnormalize(object):
     def __call__(self, sample):
         return sample * (self.std * self.zfact) + self.mean
 
+class MinMaxNormalize(object):
+    def __init__(self, mean, minval, maxval):
+        self.mean = mean
+        self.minval = minval
+        self.maxval = maxval
 
-class LogScale(object):
     def __call__(self, sample):
-        data = sample['data']
-        sign = np.sign(data)
-        sample['data'] = np.nan_to_num(sign * np.log(np.abs(data)))
+        return (sample - self.mean) / (self.maxval - self.minval) * 2
+
+class MinMaxUnnormalize(object):
+    def __init__(self, mean, minval, maxval):
+        self.mean = mean
+        self.minval = minval
+        self.maxval = maxval
+
+    def __call__(self, sample):
+        return sample/2.*(self.maxval - self.minval)+self.mean
+
+class ToLogScale(object):
+    def __call__(self, sample):
+        loc = sample >= 0
+        sample[loc] = np.log(sample[loc]+1.)
+        sample[~loc] = -1 * np.log(np.abs(sample[~loc])+1.)
         return sample
 
+class FromLogScale(object):
+    def __call__(self, sample):         
+        loc = sample >= 0
+        sample[loc] = np.exp(sample[loc])-1.
+        sample[~loc] = -1 * (np.exp(np.abs(sample[~loc]))-1.)
         return sample
 
 

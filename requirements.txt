@@ -11,3 +11,4 @@ pixell
 scikit-image
 mlflow
 lmdb
+fast_histogram

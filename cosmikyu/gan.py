@@ -96,7 +96,7 @@ class GAN(object):
         return lambda x, y : np.random.normal(0, 1, (x, y))
 
     def update_latent_vector_sampler(self, sampler):
-        return self.latent_vector_sampler = sampler
+        self.latent_vector_sampler = sampler
 
     def _flip_label(self):
         return np.random.uniform(0, 1) < self.p_fliplabel
@@ -473,7 +473,7 @@ class DCGAN_SIMPLE_Discriminator(nn.Module):
 class DCGAN(DCGAN_SIMPLE):
     def __init__(self, identifier, shape, latent_dim, output_path=None, experiment_path=None, cuda=False, ngpu=1,
                  nconv_layer_gen=2, nconv_layer_disc=2, nconv_fcgen=32, nconv_fcdis=32, kernal_size=5, stride=2,
-                 padding=2, output_padding=1, tanh_activation=True):
+                 padding=2, output_padding=1, gen_act=nn.Tanh()):
         super().__init__(identifier, shape, latent_dim, output_path=output_path, experiment_path=experiment_path,
                          cuda=cuda, ngpu=ngpu, nconv_layer_gen=nconv_layer_gen, nconv_layer_disc=nconv_layer_disc,
                          nconv_fcgen=nconv_fcgen, nconv_fcdis=nconv_fcdis)
@@ -481,12 +481,11 @@ class DCGAN(DCGAN_SIMPLE):
         self.model_params.update({"nconv_layer_gen": self.nconv_layer_gen, "nconv_layer_disc": self.nconv_layer_disc,
                                   "nconv_fcgen": self.nconv_fcgen, "nconv_fcdis": self.nconv_fcdis,
                                   "kernal_size": kernal_size,
-                                  "stride": stride, "padding": padding, "output_padding": output_padding, 
-                                  "tanh_activation": tanh_activation})
+                                  "stride": stride, "padding": padding, "output_padding": output_padding, "gen_act": gen_act.__class__.__name__})
 
         self.generator = DCGAN_Generator(shape, latent_dim, nconv_layer=self.nconv_layer_gen, nconv_fc=self.nconv_fcgen,
                                          ngpu=self.ngpu, kernal_size=kernal_size, stride=stride, padding=padding,
-                                         output_padding=output_padding, tanh_activation=tanh_activation).to(device=self.device)
+                                         output_padding=output_padding, activation=gen_act).to(device=self.device)
         self.discriminator = DCGAN_Discriminator(shape, nconv_layer=self.nconv_layer_disc, nconv_fc=self.nconv_fcdis,
                                                  ngpu=self.ngpu, kernal_size=kernal_size, stride=stride,
                                                  padding=padding).to(device=self.device)
@@ -499,12 +498,12 @@ class DCGAN(DCGAN_SIMPLE):
 class DCGAN_WGP(DCGAN):
     def __init__(self, identifier, shape, latent_dim, output_path=None, experiment_path=None, cuda=False, ngpu=1,
                  nconv_layer_gen=2, nconv_layer_disc=2, nconv_fcgen=32, nconv_fcdis=32, kernal_size=5, stride=2,
-                 padding=2, output_padding=1, tanh_activation=True):
+                 padding=2, output_padding=1, gen_act=nn.Tanh()):
         super().__init__(identifier, shape, latent_dim, output_path=output_path, experiment_path=experiment_path,
                          cuda=cuda, ngpu=ngpu, nconv_layer_gen=nconv_layer_gen, nconv_layer_disc=nconv_layer_disc,
                          nconv_fcgen=nconv_fcgen, nconv_fcdis=nconv_fcdis, kernal_size=kernal_size, stride=stride,
                          padding=padding,
-                         output_padding=output_padding, tanh_activation=tanh_activation)
+                         output_padding=output_padding, gen_act=gen_act)
 
         del self.discriminator
         self.discriminator = DCGAN_Discriminator(shape, nconv_layer=self.nconv_layer_disc, nconv_fc=self.nconv_fcdis,
@@ -546,9 +545,53 @@ class DCGAN_WGP(DCGAN):
                       mlflow_run=mlflow_run,
                       lr=lr, betas=betas, lambda_gp=lambda_gp)
 
+class Sinh(nn.Module):
+    def __init__(self):
+        super().__init__()
+        
+    def forward(self, sample):
+        return torch.sinh(sample)
+
+class SehgalActivationLayer(nn.Module):
+    def __init__(self, threshold_settings):
+        super().__init__()
+        self.threshold_settings = threshold_settings
+
+    def forward(self, sample):
+        ret = sample.clone()
+        ret[:,:2,:,:] = torch.tanh(sample[:,:2,:,:]/20.)*20.
+        #ret[:,2,:,:] = nn.functional.elu(sample[:,2,:,:]+13.5, alpha=1.0)-13.5
+        for i in [2,3,4]:
+            minval, maxval = self.threshold_settings[i]
+            loc = sample[:,i,:,:] != torch.clamp(sample[:,i,:,:], minval, maxval)
+            ret[:,i,:,:][loc] = 0.
+        return ret
+
+class ScaledTanh(nn.Module):
+    def __init__(self, a=15., b=2./15.):
+        super().__init__()
+        self.a = a
+        self.b = b
+
+    def forward(self, sample):
+        return torch.tanh(sample*self.b)*self.a
+
+class MultiHardTanh(nn.Module):
+    def __init__(self, tanh_settings):
+        super().__init__()
+        self.nchannels = len(tanh_settings)
+        self.tanh_settings = tanh_settings
+        
+    def forward(self, sample):
+        ret = sample.clone()
+        for i in range(self.nchannels):
+            minval, maxval = self.tanh_settings[i]
+            ret[:,i,:,:] = nn.functional.hardtanh(sample[:,i,:,:], minval, maxval)
+        
+        return ret
 
 class DCGAN_Generator(nn.Module):
-    def __init__(self, shape, latent_dim, nconv_layer=2, nconv_fc=32, ngpu=1, kernal_size=5, stride=2, padding=2, output_padding=1, tanh_activation=True):
+    def __init__(self, shape, latent_dim, nconv_layer=2, nconv_fc=32, ngpu=1, kernal_size=5, stride=2, padding=2, output_padding=1, activation=None):
         super().__init__()
 
         self.shape = shape
@@ -561,7 +604,7 @@ class DCGAN_Generator(nn.Module):
         self.padding = padding
         self.output_padding = output_padding
         self.ds_size = shape[-1] // self.stride ** self.nconv_layer
-        self.tanh_activation = tanh_activation
+        self.activation = activation
         nconv_lc = nconv_fc * self.stride ** (self.nconv_layer - 1)
 
         def _get_conv_layers(nconv_layer, nconv_lc):
@@ -584,8 +627,8 @@ class DCGAN_Generator(nn.Module):
         layers.extend([nn.ConvTranspose2d(self.nconv_fc, self.shape[0], self.kernal_size, stride=self.stride,
                                           padding=self.padding,
                                           output_padding=output_padding)])
-        if self.tanh_activation:
-            layers.extend([nn.Tanh()])
+        if self.activation is not None:
+            layers.extend([self.activation])
         self.model = nn.Sequential(*layers)
 
     def forward(self, z):
@@ -594,7 +637,6 @@ class DCGAN_Generator(nn.Module):
         else:
             ret = self.model(z)
         return ret
-
 
 class DCGAN_Discriminator(nn.Module):
     def __init__(self, shape, nconv_layer=2, nconv_fc=32, ngpu=1, kernal_size=5, stride=2, padding=2, normalize=True):
@@ -649,20 +691,20 @@ class Reshape(nn.Module):
 class COSMOGAN(DCGAN):
     def __init__(self, identifier, shape, latent_dim, output_path=None, experiment_path=None,
                  cuda=False, nconv_fcgen=64,
-                 nconv_fcdis=64, ngpu=1, tanh_activation=True):
+                 nconv_fcdis=64, ngpu=1, gen_act=nn.Tanh()):
         super().__init__(identifier, shape, latent_dim,  output_path=output_path,
                          experiment_path=experiment_path,
                          cuda=cuda, ngpu=ngpu, nconv_layer_gen=4, nconv_layer_disc=4,
                          nconv_fcgen=nconv_fcgen, nconv_fcdis=nconv_fcdis, kernal_size=5, stride=2, padding=2,
-                         output_padding=1, tanh_activation=tanh_activation)
+                         output_padding=1, gen_act=gen_act)
 
 
 class COSMOGAN_WGP(DCGAN_WGP):
     def __init__(self, identifier, shape, latent_dim, output_path=None, experiment_path=None,
                  cuda=False, nconv_fcgen=64,
-                 nconv_fcdis=64, ngpu=1, tanh_activation=True):
+                 nconv_fcdis=64, ngpu=1, gen_act=nn.Tanh()):
         super().__init__(identifier, shape, latent_dim,  output_path=output_path,
                          experiment_path=experiment_path,
                          cuda=cuda, ngpu=ngpu, nconv_layer_gen=4, nconv_layer_disc=4,
                          nconv_fcgen=nconv_fcgen, nconv_fcdis=nconv_fcdis, kernal_size=5, stride=2, padding=2,
-                         output_padding=1, tanh_activation=tanh_activation)
+                         output_padding=1, gen_act=gen_act)

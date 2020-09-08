@@ -1,4 +1,5 @@
 from cosmikyu import config
+from cosmikyu import nn as cnn
 import numpy as np
 import os
 
@@ -60,7 +61,7 @@ class GAN(object):
             print("failed to load saved states")
 
     def save_states(self, output_path, postfix="", mlflow_run=None):
-        postfix = "" if postfix == "" else "_{}".format(str(postfix)) 
+        postfix = "" if postfix == "" else "_{}".format(str(postfix))
         print("saving states", postfix)
         generator_state_file = os.path.join(output_path, "generator{}.pt".format(postfix))
         discriminator_state_file = os.path.join(output_path, "discriminator{}.pt".format(postfix))
@@ -73,7 +74,6 @@ class GAN(object):
         else:
             torch.save(self.generator.state_dict(), generator_state_file)
             torch.save(self.discriminator.state_dict(), discriminator_state_file)
-            
 
     def _get_optimizers(self, **kwargs):
         raise NotImplemented()
@@ -93,7 +93,7 @@ class GAN(object):
         return Variable(self.Tensor(self.latent_vector_sampler(nbatch, self.latent_dim)))
 
     def _get_default_latent_vector_sampler(self):
-        return lambda x, y : np.random.normal(0, 1, (x, y))
+        return lambda x, y: np.random.normal(0, 1, (x, y))
 
     def update_latent_vector_sampler(self, sampler):
         self.latent_vector_sampler = sampler
@@ -125,12 +125,11 @@ class GAN(object):
         if load_states:
             self.load_states(model_path)
 
-
         self.save_states(model_path, 0)
         # Get Optimizers
         opt_gen, opt_disc = self._get_optimizers(**kwargs)
         batches_done = 0
-        for epoch in range(nepochs): 
+        for epoch in range(nepochs):
 
             for i, sample in enumerate(dataloader):
                 imgs = sample[0]
@@ -175,9 +174,8 @@ class GAN(object):
                                nrow=int(temp.shape[0] / 2.))
                 batches_done += 1
 
-
-            if int(epoch+1) % save_interval == 0 and save_states:
-                self.save_states(model_path, int(epoch+1))
+            if int(epoch + 1) % save_interval == 0 and save_states:
+                self.save_states(model_path, int(epoch + 1))
         if mlflow_run:
             mlflow.log_artifacts(artifacts_path)
         if save_states:
@@ -273,61 +271,6 @@ class WGAN_GP(GAN):
                       lr=lr, betas=betas, lambda_gp=lambda_gp)
 
 
-class WGAN_Generator(nn.Module):
-    def __init__(self, shape, latent_dim, ngpu=1):
-        super(WGAN_Generator, self).__init__()
-        self.shape = shape
-        self.latent_dim = latent_dim
-        self.ngpu = ngpu
-
-        def custom_layer(dim_in, dim_out, batch_normalize=True):
-            layers = [nn.Linear(dim_in, dim_out)]
-            if batch_normalize:
-                layers.append(nn.BatchNorm1d(dim_out, 0.8))
-            layers.append(nn.LeakyReLU(0.2, inplace=True))
-            return layers
-
-        self.model = nn.Sequential(
-            *custom_layer(self.latent_dim, 128, batch_normalize=False),
-            *custom_layer(128, 256),
-            *custom_layer(256, 512),
-            *custom_layer(512, 1024),
-            nn.Linear(1024, int(np.prod(shape))),
-            nn.Tanh()
-        )
-
-    def forward(self, z):
-        if z.is_cuda and self.ngpu > 1:
-            img = nn.parallel.data_parallel(self.model, z, range(self.ngpu))
-        else:
-            img = self.model(z)
-        img = img.view(img.shape[0], *self.shape)
-        return img
-
-
-class WGAN_Discriminator(nn.Module):
-    def __init__(self, shape, ngpu=1):
-        super(WGAN_Discriminator, self).__init__()
-        self.shape = shape
-        self.ngpu = ngpu
-
-        self.model = nn.Sequential(
-            nn.Linear(int(np.prod(self.shape)), 512),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.Linear(512, 256),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.Linear(256, 1)
-        )
-
-    def forward(self, img):
-        flattened = img.view(img.shape[0], -1)
-        if img.is_cuda and self.ngpu > 1:
-            ret = nn.parallel.data_parallel(self.model, flattened, range(self.ngpu))
-        else:
-            ret = self.model(flattened)
-        return ret
-
-
 class DCGAN_SIMPLE(GAN):
     def __init__(self, identifier, shape, latent_dim, output_path=None, experiment_path=None, cuda=False, ngpu=1,
                  nconv_layer_gen=2, nconv_layer_disc=2, nconv_fcgen=32, nconv_fcdis=32):
@@ -419,7 +362,7 @@ class DCGAN_SIMPLE_Generator(nn.Module):
             return conv_layers
 
         layers = [nn.Linear(self.latent_dim, nconv_lc * self.ds_size ** 2),
-                  Reshape((nconv_lc, self.ds_size, self.ds_size)),
+                  cnn.Reshape((nconv_lc, self.ds_size, self.ds_size)),
                   nn.BatchNorm2d(nconv_lc)]
 
         layers.extend(_get_conv_layers(self.nconv_layer, nconv_lc))
@@ -459,7 +402,7 @@ class DCGAN_SIMPLE_Discriminator(nn.Module):
             layers.extend(discriminator_block(self.nconv_fc * 2 ** (i), self.nconv_fc * 2 ** (i + 1)))
 
         layers.extend(
-            [Reshape((nconv_lc * self.ds_size ** 2,)), nn.Linear(nconv_lc * self.ds_size ** 2, 1), nn.Sigmoid()])
+            [cnn.Reshape((nconv_lc * self.ds_size ** 2,)), nn.Linear(nconv_lc * self.ds_size ** 2, 1), nn.Sigmoid()])
         self.model = nn.Sequential(*layers)
 
     def forward(self, img):
@@ -481,7 +424,8 @@ class DCGAN(DCGAN_SIMPLE):
         self.model_params.update({"nconv_layer_gen": self.nconv_layer_gen, "nconv_layer_disc": self.nconv_layer_disc,
                                   "nconv_fcgen": self.nconv_fcgen, "nconv_fcdis": self.nconv_fcdis,
                                   "kernal_size": kernal_size,
-                                  "stride": stride, "padding": padding, "output_padding": output_padding, "gen_act": gen_act.__class__.__name__})
+                                  "stride": stride, "padding": padding, "output_padding": output_padding,
+                                  "gen_act": gen_act.__class__.__name__})
 
         self.generator = DCGAN_Generator(shape, latent_dim, nconv_layer=self.nconv_layer_gen, nconv_fc=self.nconv_fcgen,
                                          ngpu=self.ngpu, kernal_size=kernal_size, stride=stride, padding=padding,
@@ -545,53 +489,14 @@ class DCGAN_WGP(DCGAN):
                       mlflow_run=mlflow_run,
                       lr=lr, betas=betas, lambda_gp=lambda_gp)
 
-class Sinh(nn.Module):
-    def __init__(self):
-        super().__init__()
-        
-    def forward(self, sample):
-        return torch.sinh(sample)
 
-class SehgalActivationLayer(nn.Module):
-    def __init__(self, threshold_settings):
-        super().__init__()
-        self.threshold_settings = threshold_settings
 
-    def forward(self, sample):
-        ret = sample.clone()
-        ret[:,:2,:,:] = torch.tanh(sample[:,:2,:,:]/20.)*20.
-        #ret[:,2,:,:] = nn.functional.elu(sample[:,2,:,:]+13.5, alpha=1.0)-13.5
-        for i in [2,3,4]:
-            minval, maxval = self.threshold_settings[i]
-            loc = sample[:,i,:,:] != torch.clamp(sample[:,i,:,:], minval, maxval)
-            ret[:,i,:,:][loc] = 0.
-        return ret
 
-class ScaledTanh(nn.Module):
-    def __init__(self, a=15., b=2./15.):
-        super().__init__()
-        self.a = a
-        self.b = b
 
-    def forward(self, sample):
-        return torch.tanh(sample*self.b)*self.a
-
-class MultiHardTanh(nn.Module):
-    def __init__(self, tanh_settings):
-        super().__init__()
-        self.nchannels = len(tanh_settings)
-        self.tanh_settings = tanh_settings
-        
-    def forward(self, sample):
-        ret = sample.clone()
-        for i in range(self.nchannels):
-            minval, maxval = self.tanh_settings[i]
-            ret[:,i,:,:] = nn.functional.hardtanh(sample[:,i,:,:], minval, maxval)
-        
-        return ret
 
 class DCGAN_Generator(nn.Module):
-    def __init__(self, shape, latent_dim, nconv_layer=2, nconv_fc=32, ngpu=1, kernal_size=5, stride=2, padding=2, output_padding=1, activation=None):
+    def __init__(self, shape, latent_dim, nconv_layer=2, nconv_fc=32, ngpu=1, kernal_size=5, stride=2, padding=2,
+                 output_padding=1, activation=None):
         super().__init__()
 
         self.shape = shape
@@ -618,7 +523,7 @@ class DCGAN_Generator(nn.Module):
             return conv_layers
 
         layers = [nn.Linear(self.latent_dim, nconv_lc * self.ds_size ** 2),
-                  Reshape((nconv_lc, self.ds_size, self.ds_size)),
+                  cnn.Reshape((nconv_lc, self.ds_size, self.ds_size)),
                   nn.BatchNorm2d(nconv_lc),
                   nn.LeakyReLU(0.2, inplace=True)]
 
@@ -637,6 +542,7 @@ class DCGAN_Generator(nn.Module):
         else:
             ret = self.model(z)
         return ret
+
 
 class DCGAN_Discriminator(nn.Module):
     def __init__(self, shape, nconv_layer=2, nconv_fc=32, ngpu=1, kernal_size=5, stride=2, padding=2, normalize=True):
@@ -666,8 +572,7 @@ class DCGAN_Discriminator(nn.Module):
                                     normalize=normalize))
 
         layers.extend(
-            [Reshape((nconv_lc * self.ds_size ** 2,)), nn.Linear(nconv_lc * self.ds_size ** 2, 1)])
-        
+            [cnn.Reshape((nconv_lc * self.ds_size ** 2,)), nn.Linear(nconv_lc * self.ds_size ** 2, 1)])
 
         self.model = nn.Sequential(*layers)
 
@@ -679,20 +584,12 @@ class DCGAN_Discriminator(nn.Module):
         return ret
 
 
-class Reshape(nn.Module):
-    def __init__(self, shape):
-        super(Reshape, self).__init__()
-        self.shape = shape
-
-    def forward(self, x):
-        return x.view(x.shape[0], *self.shape)
-
 
 class COSMOGAN(DCGAN):
     def __init__(self, identifier, shape, latent_dim, output_path=None, experiment_path=None,
                  cuda=False, nconv_fcgen=64,
                  nconv_fcdis=64, ngpu=1, gen_act=nn.Tanh()):
-        super().__init__(identifier, shape, latent_dim,  output_path=output_path,
+        super().__init__(identifier, shape, latent_dim, output_path=output_path,
                          experiment_path=experiment_path,
                          cuda=cuda, ngpu=ngpu, nconv_layer_gen=4, nconv_layer_disc=4,
                          nconv_fcgen=nconv_fcgen, nconv_fcdis=nconv_fcdis, kernal_size=5, stride=2, padding=2,
@@ -703,8 +600,63 @@ class COSMOGAN_WGP(DCGAN_WGP):
     def __init__(self, identifier, shape, latent_dim, output_path=None, experiment_path=None,
                  cuda=False, nconv_fcgen=64,
                  nconv_fcdis=64, ngpu=1, gen_act=nn.Tanh()):
-        super().__init__(identifier, shape, latent_dim,  output_path=output_path,
+        super().__init__(identifier, shape, latent_dim, output_path=output_path,
                          experiment_path=experiment_path,
                          cuda=cuda, ngpu=ngpu, nconv_layer_gen=4, nconv_layer_disc=4,
                          nconv_fcgen=nconv_fcgen, nconv_fcdis=nconv_fcdis, kernal_size=5, stride=2, padding=2,
                          output_padding=1, gen_act=gen_act)
+
+class WGAN_Generator(nn.Module):
+    def __init__(self, shape, latent_dim, ngpu=1):
+        super(WGAN_Generator, self).__init__()
+        self.shape = shape
+        self.latent_dim = latent_dim
+        self.ngpu = ngpu
+
+        def custom_layer(dim_in, dim_out, batch_normalize=True):
+            layers = [nn.Linear(dim_in, dim_out)]
+            if batch_normalize:
+                layers.append(nn.BatchNorm1d(dim_out, 0.8))
+            layers.append(nn.LeakyReLU(0.2, inplace=True))
+            return layers
+
+        self.model = nn.Sequential(
+            *custom_layer(self.latent_dim, 128, batch_normalize=False),
+            *custom_layer(128, 256),
+            *custom_layer(256, 512),
+            *custom_layer(512, 1024),
+            nn.Linear(1024, int(np.prod(shape))),
+            nn.Tanh()
+        )
+
+    def forward(self, z):
+        if z.is_cuda and self.ngpu > 1:
+            img = nn.parallel.data_parallel(self.model, z, range(self.ngpu))
+        else:
+            img = self.model(z)
+        img = img.view(img.shape[0], *self.shape)
+        return img
+
+
+class WGAN_Discriminator(nn.Module):
+    def __init__(self, shape, ngpu=1):
+        super(WGAN_Discriminator, self).__init__()
+        self.shape = shape
+        self.ngpu = ngpu
+
+        self.model = nn.Sequential(
+            nn.Linear(int(np.prod(self.shape)), 512),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Linear(512, 256),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Linear(256, 1)
+        )
+
+    def forward(self, img):
+        flattened = img.view(img.shape[0], -1)
+        if img.is_cuda and self.ngpu > 1:
+            ret = nn.parallel.data_parallel(self.model, flattened, range(self.ngpu))
+        else:
+            ret = self.model(flattened)
+        return ret
+

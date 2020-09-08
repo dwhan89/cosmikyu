@@ -3,13 +3,14 @@ from pixell import enmap
 from orphics import maps as omaps
 from . import utils
 
+
 class SehgalDataNormalizerSymLogMinMax(object):
-    def __init__(self, normalization_info_file, log_norm_skip = [0,1]):
+    def __init__(self, normalization_info_file, log_norm_skip=[0, 1]):
         temp = np.load(normalization_info_file, allow_pickle=True)
-        self.norm_info = utils.load_data(normalization_info_file) 
+        self.norm_info = utils.load_data(normalization_info_file)
         self.channel_idxes = ["kappa", "ksz", "tsz", "ir_pts", "rad_pts"]
         self.nchannel = len(self.channel_idxes)
-        self.log_normalizer = ToSymLogScale() 
+        self.log_normalizer = ToSymLogScale()
         self.minmax_normalizers = [None] * self.nchannel
         self.log_norm_skip = log_norm_skip
         for i, channel_idx in enumerate(self.channel_idxes):
@@ -19,17 +20,18 @@ class SehgalDataNormalizerSymLogMinMax(object):
     def __call__(self, sample):
         assert (len(sample.shape) == 3)
         for i in range(self.nchannel):
-            if i not in self.log_norm_skip: sample[i] = self.log_normalizer(sample[i,...])
+            if i not in self.log_norm_skip: sample[i] = self.log_normalizer(sample[i, ...])
             sample[i] = self.minmax_normalizers[i](sample[i, ...])
         return sample
 
+
 class SehgalDataUnnormalizerSymLogMinMax(object):
-    def __init__(self, normalization_info_file, log_norm_skip = [0,1]):
+    def __init__(self, normalization_info_file, log_norm_skip=[0, 1]):
         temp = np.load(normalization_info_file, allow_pickle=True)
-        self.norm_info = utils.load_data(normalization_info_file) 
+        self.norm_info = utils.load_data(normalization_info_file)
         self.channel_idxes = ["kappa", "ksz", "tsz", "ir_pts", "rad_pts"]
         self.nchannel = len(self.channel_idxes)
-        self.log_unnormalizer = FromSymLogScale() 
+        self.log_unnormalizer = FromSymLogScale()
         self.minmax_unnormalizers = [None] * self.nchannel
         self.log_norm_skip = log_norm_skip
         for i, channel_idx in enumerate(self.channel_idxes):
@@ -37,11 +39,12 @@ class SehgalDataUnnormalizerSymLogMinMax(object):
             self.minmax_unnormalizers[i] = MinMaxUnnormalize(temp["mean"], temp["min"], temp["max"])
 
     def __call__(self, sample):
-        assert (len(sample.shape) == 3) 
+        assert (len(sample.shape) == 3)
         for i in range(self.nchannel):
             sample[i] = self.minmax_unnormalizers[i](sample[i, ...])
             if i not in self.log_norm_skip: sample[i] = self.log_unnormalizer(sample[i, ...])
         return sample
+
 
 class SehgalDataNormalizerPowZ(object):
     def __init__(self, normalization_info_file, zfact=2, power_normalize=True, z_normalize=True):
@@ -108,6 +111,7 @@ class SehgalDataUnnormalizerPowZ(object):
             if self.power_normalize: sample[i] = self.power_normalizers[i](sample[i, ...])
         return sample
 
+
 class SehgalDataNormalizerScaledLogZ(object):
     def __init__(self, normalization_info_file):
         temp = np.load(normalization_info_file, allow_pickle=True)
@@ -121,7 +125,6 @@ class SehgalDataNormalizerScaledLogZ(object):
             temp = self.norm_info[channel_idx]
             flip_sign = channel_idx == "tsz"
             self.log_normalizers[i] = ToScaledLogScale(scaling=temp["std"]) if i > 1 else Identity()
-        
 
         for i, channel_idx in enumerate(self.channel_idxes):
             temp = self.norm_info[channel_idx]
@@ -150,7 +153,6 @@ class SehgalDataUnnormalizerScaledLogZ(object):
             temp = self.norm_info[channel_idx]
             flip_sign = channel_idx == "tsz"
             self.log_unnormalizers[i] = FromScaledLogScale(scaling=temp["std"]) if i > 1 else Identity()
-        
 
         for i, channel_idx in enumerate(self.channel_idxes):
             temp = self.norm_info[channel_idx]
@@ -160,10 +162,11 @@ class SehgalDataUnnormalizerScaledLogZ(object):
 
     def __call__(self, sample):
         assert (len(sample.shape) == 3)
-        for i in range(self.nchannel): 
+        for i in range(self.nchannel):
             sample[i] = self.z_unnormalizers[i](sample[i, ...])
             sample[i] = self.log_unnormalizers[i](sample[i, ...])
         return sample
+
 
 class SehgalSubcomponets(object):
     def __init__(self, idxes=None):
@@ -214,9 +217,11 @@ class RandomFlips(object):
             sample = np.flip(sample, -1)
         return sample
 
+
 class Identity(object):
     def __call__(self, sample):
         return sample
+
 
 class PowerNormalize(object):
     def __init__(self, pow_neg, pow_pos):
@@ -254,6 +259,7 @@ class ZUnnormalize(object):
     def __call__(self, sample):
         return sample * (self.std * self.zfact) + self.mean
 
+
 class MinMaxNormalize(object):
     def __init__(self, mean, minval, maxval):
         self.mean = mean
@@ -263,6 +269,7 @@ class MinMaxNormalize(object):
     def __call__(self, sample):
         return (sample - self.mean) / (self.maxval - self.minval) * 2
 
+
 class MinMaxUnnormalize(object):
     def __init__(self, mean, minval, maxval):
         self.mean = mean
@@ -270,7 +277,7 @@ class MinMaxUnnormalize(object):
         self.maxval = maxval
 
     def __call__(self, sample):
-        return sample/2.*(self.maxval - self.minval)+self.mean
+        return sample / 2. * (self.maxval - self.minval) + self.mean
 
 
 class ToScaledLogScale(object):
@@ -279,9 +286,10 @@ class ToScaledLogScale(object):
 
     def __call__(self, sample):
         loc = sample >= 0
-        sample[loc] = np.log(sample[loc]/self.scaling+1.)
-        sample[~loc] = -1 * np.log(np.abs(sample[~loc]/self.scaling)+1.)
+        sample[loc] = np.log(sample[loc] / self.scaling + 1.)
+        sample[~loc] = -1 * np.log(np.abs(sample[~loc] / self.scaling) + 1.)
         return sample
+
 
 class FromScaledLogScale(object):
     def __init__(self, scaling=1.):
@@ -289,33 +297,27 @@ class FromScaledLogScale(object):
 
     def __call__(self, sample):
         loc = sample >= 0
-        sample[loc] = (np.exp(sample[loc])-1.)*self.scaling
-        sample[~loc] = -1 * ((np.exp(np.abs(sample[~loc]))-1.)*self.scaling)
-        return sample        
+        sample[loc] = (np.exp(sample[loc]) - 1.) * self.scaling
+        sample[~loc] = -1 * ((np.exp(np.abs(sample[~loc])) - 1.) * self.scaling)
+        return sample
+
 
 class FromSymLogScale(object):
-    def __call__(self, sample):         
+    def __call__(self, sample):
         loc = sample >= 0
-        sample[loc] = np.exp(sample[loc])-1.
-        sample[~loc] = -1 * (np.exp(np.abs(sample[~loc]))-1.)
+        sample[loc] = np.exp(sample[loc]) - 1.
+        sample[~loc] = -1 * (np.exp(np.abs(sample[~loc])) - 1.)
         return sample
+
 
 class ToSymLogScale(object):
     def __call__(self, sample):
         loc = sample >= 0
-        sample[loc] = np.log(sample[loc]+1.)
-        sample[~loc] = -1 * np.log(np.abs(sample[~loc])+1.)
+        sample[loc] = np.log(sample[loc] + 1.)
+        sample[~loc] = -1 * np.log(np.abs(sample[~loc]) + 1.)
         return sample
 
-class FromSymLogScale(object):
-    def __call__(self, sample):         
-        loc = sample >= 0
-        sample[loc] = np.exp(sample[loc])-1.
-        sample[~loc] = -1 * (np.exp(np.abs(sample[~loc]))-1.)
-        return sample
 
-                
-        
 class ToEnmap(object):
     def __init__(self, wcs):
         self.wcs = wcs
@@ -367,4 +369,4 @@ class TakePS(object):
     def __call__(self, sample):
         lbin, ps = omaps.binned_power(sample, self.bin_edges, mask=self.taper)
         ps = ps if not self.return_dl else ps * (lbin * (lbin + 1) / (2 * np.pi))
-        return (lbin, ps)
+        return lbin, ps

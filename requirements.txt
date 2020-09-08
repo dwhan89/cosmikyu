@@ -1,7 +1,7 @@
 torch
-numpy
+numpy~=1.18.1
 pixell
-matplotlib
+matplotlib~=3.1.3
 seaborn
 versioneer 
 torchvision
@@ -12,3 +12,4 @@ scikit-image
 mlflow
 lmdb
 fast_histogram
+scipy

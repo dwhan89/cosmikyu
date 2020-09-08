@@ -1,30 +1,33 @@
-from . import  mpi, config, utils
+from . import mpi, config, utils
 import numpy as np
 import os
 from fast_histogram import histogram1d
+from scipy.stats import chi2
+
 
 class STATS(object):
 
-    def __init__(self, stat_identifier=None, output_dir =  None, overwrite=False, tag = 3235):
-        self.output_dir  = output_dir
-        if mpi.rank == 0 :
-            print("[STATS] output_dir is %s" %self.output_dir)
+    def __init__(self, stat_identifier=None, output_dir=None, overwrite=False, tag=3235):
+        self.output_dir = output_dir
+        if mpi.rank == 0:
+            print("[STATS] output_dir is %s" % self.output_dir)
             os.makedirs(self.output_dir, exist_ok=True)
         mpi.barrier()
 
-        file_name        = "stats.npz" if not stat_identifier else "stats_%s.npz" %stat_identifier
+        file_name = "stats.npz" if not stat_identifier else "stats_%s.npz" % stat_identifier
 
-        self.output_file  = os.path.join(self.output_dir, file_name)
-        self.storage      = {}
-        self.stats        = {}
-        self.tag          = tag # can this be randomly assigned 
+        self.output_file = os.path.join(self.output_dir, file_name)
+        self.storage = {}
+        self.stats = {}
+        self.tag = tag  # can this be randomly assigned
         if not overwrite: self.reload_data()
 
     def add_data(self, data_key, data_idx, data, safe=False):
-        if not data_key in self.storage: self.storage[data_key] = {}
+        if data_key not in self.storage:
+            self.storage[data_key] = {}
 
         if data_key in self.storage[data_key] and safe:
-            raise ValueError("[STATS] already have %s" %((data_key,data_idx)))
+            raise ValueError("[STATS] already have %s %s" % (data_key, data_idx))
         else:
             self.storage[data_key][data_idx] = data
 
@@ -43,8 +46,8 @@ class STATS(object):
         ### passing all data through mpi is through. save it and reload it
         try:
             self.storage = utils.load_data(self.output_file)
-            #self.storage = pickle.load(open(self.output_file, 'r'))
-            if mpi.rank == 0: print("[STATS] loaded %s" %self.output_file)
+            # self.storage = pickle.load(open(self.output_file, 'r'))
+            if mpi.rank == 0: print("[STATS] loaded %s" % self.output_file)
         except:
             if mpi.rank == 0: print("[STATS] failed to reload data")
 
@@ -52,11 +55,12 @@ class STATS(object):
         self.collect_data()
 
         if mpi.rank == root:
-            print("[STATS] saving %s from root %d" %(self.output_file, root))
+            print("[STATS] saving %s from root %d" % (self.output_file, root))
             np.savez(self.output_file, **self.storage)
-            #with open(self.output_file, 'w') as handle:
+            # with open(self.output_file, 'w') as handle:
             #    pickle.dump(self.storage, handle)
-        else: pass
+        else:
+            pass
         mpi.barrier()
         if reload_st: self.reload_data()
 
@@ -78,7 +82,7 @@ class STATS(object):
         self.collect_data()
 
         def _purge(data_key, data_idx):
-            print("[STATS] purging %s %d" %(data_idx, data_key))
+            print("[STATS] purging %s %d" % (data_idx, data_key))
             del self.storage[data_key][data_idx]
 
         if mpi.rank == 0:
@@ -105,41 +109,43 @@ class STATS(object):
 
         return ret
 
+
 def stats(data, axis=0, ddof=1.):
     datasize = data.shape
-    mean     = np.mean(data, axis=axis)
-    cov      = np.cov(data.transpose(), ddof=ddof)
-    cov_mean = cov/ float(datasize[0])
+    mean = np.mean(data, axis=axis)
+    cov = np.cov(data.transpose(), ddof=ddof)
+    cov_mean = cov / float(datasize[0])
     corrcoef = np.corrcoef(data.transpose())
-    std      = np.std(data, axis=axis, ddof=ddof) # use the N-1 normalization
-    std_mean = std/ np.sqrt(datasize[0])
+    std = np.std(data, axis=axis, ddof=ddof)  # use the N-1 normalization
+    std_mean = std / np.sqrt(datasize[0])
 
-    return {'mean': mean, 'cov': cov, 'corrcoef': corrcoef, 'std': std, 'datasize': datasize\
-            ,'std_mean': std_mean, 'cov_mean': cov_mean}
+    return {'mean': mean, 'cov': cov, 'corrcoef': corrcoef, 'std': std, 'datasize': datasize \
+        , 'std_mean': std_mean, 'cov_mean': cov_mean}
+
 
 def chisq(obs, exp, cov_input, ddof=None, sidx=None, eidx=None, inv_corr=1.0):
-    from scipy.stats import chi2
-    diff  = obs-exp if not (exp == 0.).all() else obs.copy()
-    cov  = cov_input.copy()
+    diff = obs - exp if not (exp == 0.).all() else obs.copy()
+    cov = cov_input.copy()
 
     if sidx is None: sidx = 0
     if eidx is None: eidx = len(diff)
     diff = diff[sidx:eidx]
-    cov  = cov[sidx:eidx, sidx:eidx]
+    cov = cov[sidx:eidx, sidx:eidx]
 
     norm = np.mean(np.abs(cov))
-    cov  /= norm
+    cov /= norm
     diff /= np.sqrt(norm)
 
     print(inv_corr)
-    cov_inv = np.linalg.pinv(cov)*inv_corr
+    cov_inv = np.linalg.pinv(cov) * inv_corr
     chisq = np.dot(cov_inv, diff)
     chisq = np.dot(diff.T, chisq)
 
     if ddof is None: ddof = len(diff)
-    p     = chi2.sf(chisq, ddof)
+    p = chi2.sf(chisq, ddof)
 
-    return(chisq, p)
+    return (chisq, p)
+
 
 def reduced_chisq(obs, exp, cov, ddof_cor=0., sidx=None, eidx=None, inv_corr=1.):
     if sidx is None: sidx = 0
@@ -148,22 +154,22 @@ def reduced_chisq(obs, exp, cov, ddof_cor=0., sidx=None, eidx=None, inv_corr=1.)
     exp = exp[sidx:eidx]
     cov = cov[sidx:eidx, sidx:eidx]
 
-    ddof     = len(obs)# ddof
+    ddof = len(obs)  # ddof
     ddof_cor = float(ddof_cor)
-    ddof     = ddof - ddof_cor
+    ddof = ddof - ddof_cor
 
-    _chisq, p = chisq(obs,exp,cov,ddof, sidx=None, eidx=None, inv_corr=inv_corr)
-    rchisq    = _chisq / ddof
-    print("DDOF: ",ddof)
-    return(rchisq, p)
+    _chisq, p = chisq(obs, exp, cov, ddof, sidx=None, eidx=None, inv_corr=inv_corr)
+    rchisq = _chisq / ddof
+    print("DDOF: ", ddof)
+    return (rchisq, p)
 
 
 class MultBinner(object):
     def __init__(self, bin_edges, nchannels):
-        self.binners = [None]*nchannels
+        self.binners = [None] * nchannels
         self.nchannels = nchannels
         if type(bin_edges) == type([]):
-            assert(len(bin_edges) == components)
+            assert (len(bin_edges) == nchannels)
             for i in range(nchannels):
                 self.binners[i] = BINNER(bin_edges[i])
         else:
@@ -171,49 +177,49 @@ class MultBinner(object):
                 self.binners[i] = BINNER(bin_edges)
 
     def bin(self, arr, right=True):
-        assert(arr.shape[0] == self.nchannels)
+        assert (arr.shape[0] == self.nchannels)
         for i in range(self.nchannels):
             self.binners[i].bin(arr[i], right=right)
 
     def get_info(self):
         ret = {}
         for i in range(self.nchannels):
-            ret[i] = {"bin_centers":self.binners[i].bin_center,
-                    "hist":self.binners[i].storage,
-                    "bin_edges":self.binners[i].bin_edges} 
+            ret[i] = {"bin_centers": self.binners[i].bin_center,
+                      "hist": self.binners[i].storage,
+                      "bin_edges": self.binners[i].bin_edges}
         return ret
 
 
 class BINNER(object):
     def __init__(self, bin_edges):
-        bin_lower      = bin_edges[:-1].copy()
-        bin_upper      = bin_edges[1:].copy()
+        bin_lower = bin_edges[:-1].copy()
+        bin_upper = bin_edges[1:].copy()
         bin_lower = bin_lower[:len(bin_upper)]
 
-        self.bin_edges  = bin_edges
-        self.bin_lower  = bin_lower
-        self.bin_upper  = bin_upper
-        self.bin_center = (bin_lower + bin_upper)/2.
-        self.bin_sizes  = bin_upper - bin_lower + 1
-        self.nbin       = len(bin_lower)
-        self.storage   = np.zeros(len(self.bin_center))
+        self.bin_edges = bin_edges
+        self.bin_lower = bin_lower
+        self.bin_upper = bin_upper
+        self.bin_center = (bin_lower + bin_upper) / 2.
+        self.bin_sizes = bin_upper - bin_lower + 1
+        self.nbin = len(bin_lower)
+        self.storage = np.zeros(len(self.bin_center))
 
-        assert((self.bin_sizes > 0)).all()
-
+        assert (self.bin_sizes > 0).all()
 
     def bin(self, arr, right=True):
-        digitized = np.digitize(arr.flatten(), self.bin_edges, right=right) 
+        digitized = np.digitize(arr.flatten(), self.bin_edges, right=right)
         for i in range(self.nbin):
             self.storage[i] += np.sum(digitized == i)
-        return (self.bin_center, self.storage)
+        return self.bin_center, self.storage
+
 
 class FastMultBinner(object):
     def __init__(self, ranges, nbins, nchannels):
-        self.binners = [None]*nchannels
+        self.binners = [None] * nchannels
         self.nchannels = nchannels
         if type(ranges) == type([]):
-            assert(len(ranges) == nchannels)
-            assert(len(ranges) == len(nbins))
+            assert (len(ranges) == nchannels)
+            assert (len(ranges) == len(nbins))
             for i in range(ranges):
                 self.binners[i] = FastBINNER(ranges[i][0], ranges[i][1], nbins[i])
         else:
@@ -221,7 +227,7 @@ class FastMultBinner(object):
                 self.binners[i] = FastBINNER(ranges[0], ranges[1], nbins)
 
     def bin(self, arr, verbose=False):
-        assert(arr.shape[0] == self.nchannels)
+        assert (arr.shape[0] == self.nchannels)
         for i in range(self.nchannels):
             if verbose: print("binning {}".format(i))
             self.binners[i].bin(arr[i])
@@ -229,31 +235,31 @@ class FastMultBinner(object):
     def get_info(self):
         ret = {}
         for i in range(self.nchannels):
-            ret[i] = {"bin_centers":self.binners[i].bin_center,
-                    "hist":self.binners[i].storage,
-                    "bin_edges":self.binners[i].bin_edges} 
+            ret[i] = {"bin_centers": self.binners[i].bin_center,
+                      "hist": self.binners[i].storage,
+                      "bin_edges": self.binners[i].bin_edges}
         return ret
+
 
 class FastBINNER(object):
     def __init__(self, minval, maxval, nbins):
         self.minval = minval
         self.maxval = maxval
-        bin_edges = np.linspace(minval, maxval, nbins+1)
+        bin_edges = np.linspace(minval, maxval, nbins + 1)
         bin_lower = bin_edges[:-1].copy()
         bin_upper = bin_edges[1:].copy()
         bin_lower = bin_lower[:len(bin_upper)]
 
-        self.bin_edges  = bin_edges
-        self.bin_lower  = bin_lower
-        self.bin_upper  = bin_upper
-        self.bin_center = (bin_lower + bin_upper)/2.
-        self.bin_sizes  = bin_upper - bin_lower + 1
-        self.nbin       = int(len(bin_lower))
-        self.storage   = np.zeros(len(self.bin_center))
+        self.bin_edges = bin_edges
+        self.bin_lower = bin_lower
+        self.bin_upper = bin_upper
+        self.bin_center = (bin_lower + bin_upper) / 2.
+        self.bin_sizes = bin_upper - bin_lower + 1
+        self.nbin = int(len(bin_lower))
+        self.storage = np.zeros(len(self.bin_center))
 
-        assert((self.bin_sizes > 0)).all()
-
+        assert (self.bin_sizes > 0).all()
 
     def bin(self, arr):
         self.storage += histogram1d(arr, self.nbin, [self.minval, self.maxval])
-        return (self.bin_center, self.storage)
+        return self.bin_center, self.storage

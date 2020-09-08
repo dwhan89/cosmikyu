@@ -47,12 +47,12 @@ for i, comp_idx in enumerate(compts):
 SAL = gan.SehgalActivationLayer(tanh_settings)
 STanh = gan.ScaledTanh(15., 2./15.)
 
-experiment_id = "6fa01596df3d41628b4a1a2172fec7c3"
-model_dir = "/home/dwhan89/workspace/cosmikyu/output/sehgal_dcganwgp_090420/{}/model".format(experiment_id)
-DCGAN_WGP = gan.DCGAN_WGP("sehgal_dcganwgp_090420", shape, latent_dim, nconv_fcgen=64,
+#experiment_id = "6fa01596df3d41628b4a1a2172fec7c3"
+#model_dir = "/home/dwhan89/workspace/cosmikyu/output/sehgal_dcganwgp_090420/{}/model".format(experiment_id)
+DCGAN_WGP = gan.DCGAN_WGP("sehgal_dcganwgp_090520", shape, latent_dim, nconv_fcgen=64,
                           nconv_fcdis=64, cuda=cuda, ngpu=4, nconv_layer_gen=5, nconv_layer_disc=5, kernal_size=5, stride=2,
                           padding=2, output_padding=1, gen_act=STanh)
-DCGAN_WGP.load_states(model_dir, "_{}".format(5))
+#DCGAN_WGP.load_states(model_dir, "_{}".format(5))
 mlflow.set_experiment(DCGAN_WGP.identifier)
 with mlflow.start_run(experiment_id=DCGAN_WGP.experiment.experiment_id) as mlflow_run:
     torch.cuda.empty_cache()
@@ -66,7 +66,7 @@ with mlflow.start_run(experiment_id=DCGAN_WGP.experiment.experiment_id) as mlflo
         save_states=True,
         verbose=True,
         mlflow_run=mlflow_run,
-        lr=2e-04/4,
+        lr=2e-04,
         betas=(0.5, 0.999),
         lambda_gp=10.
     )

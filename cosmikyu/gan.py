@@ -382,6 +382,9 @@ class DCGAN_WGP(DCGAN):
                                                  ngpu=self.ngpu, kernal_size=kernal_size, stride=stride,
                                                  padding=padding, normalize=False).to(device=self.device)
 
+        # Initialize weights
+        self.discriminator.apply(self._weights_init_normal)
+    
     def _eval_generator_loss(self, real_imgs, gen_imgs):
         return -torch.mean(self.discriminator(gen_imgs))
 
@@ -405,9 +408,6 @@ class DCGAN_WGP(DCGAN):
         ret = -torch.mean(self.discriminator(real_imgs)) + torch.mean(self.discriminator(gen_imgs)) + kwargs[
             'lambda_gp'] * GP
         return -1 * ret if self._flip_label() else ret
-        # Initialize weights
-        self.generator.apply(self._weights_init_normal)
-        self.discriminator.apply(self._weights_init_normal)
 
     def train(self, dataloader, nepochs=200, ncritics=5, sample_interval=1000,
               save_interval=10000, load_states=True, save_states=True, verbose=True, mlflow_run=None, lr=0.0002,

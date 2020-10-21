@@ -4,6 +4,128 @@ from orphics import maps as omaps
 from . import utils
 
 
+class SehgalDataNormalizerScaledLogZShrink(object):
+    def __init__(self, normalization_info_file):
+        temp = np.load(normalization_info_file, allow_pickle=True)
+        self.norm_info = {key: temp[key].item() for key in temp}
+        self.channel_idxes = ["kappa", "ksz", "tsz", "ir_pts", "rad_pts"]
+        self.nchannel = len(self.channel_idxes)
+        self.log_normalizers = [None] * self.nchannel
+        self.z_normalizers = [None] * self.nchannel
+        self.mult_normalizers = [None] * self.nchannel
+
+        for i, channel_idx in enumerate(self.channel_idxes):
+            temp = self.norm_info[channel_idx]
+            self.log_normalizers[i] = ToScaledLogScale(scaling=temp["lognorm_std"]) if i > 1 else Identity()
+
+        for i, channel_idx in enumerate(self.channel_idxes):    
+            temp = self.norm_info[channel_idx]
+            self.z_normalizers[i] = ZNormalize(temp["znorm_mean"], temp["znorm_std"], temp["znorm_zfact"])
+            
+        for i, channel_idx in enumerate(self.channel_idxes):    
+            temp = self.norm_info[channel_idx]
+            self.mult_normalizers[i] = Multiply(1./temp["shrink_fact"])
+        
+
+    def __call__(self, sample):
+        assert (len(sample.shape) == 3)
+        for i in range(self.nchannel):
+            sample[i] = self.log_normalizers[i](sample[i, ...])
+            sample[i] = self.z_normalizers[i](sample[i, ...])
+            sample[i] = self.mult_normalizers[i](sample[i, ...])
+        return sample
+
+
+class SehgalDataUnnormalizerScaledLogZShrink(object):
+    def __init__(self, normalization_info_file):
+        temp = np.load(normalization_info_file, allow_pickle=True)
+        self.norm_info = {key: temp[key].item() for key in temp}
+        self.channel_idxes = ["kappa", "ksz", "tsz", "ir_pts", "rad_pts"]
+        self.nchannel = len(self.channel_idxes)
+        self.log_unnormalizers = [None] * self.nchannel
+        self.z_unnormalizers = [None] * self.nchannel
+        self.mult_unnormalizers = [None] * self.nchannel
+
+
+        for i, channel_idx in enumerate(self.channel_idxes):
+            temp = self.norm_info[channel_idx]
+            self.log_unnormalizers[i] = FromScaledLogScale(scaling=temp["lognorm_std"]) if i > 1 else Identity()
+
+        for i, channel_idx in enumerate(self.channel_idxes):    
+            temp = self.norm_info[channel_idx]
+            self.z_unnormalizers[i] = ZUnnormalize(temp["znorm_mean"], temp["znorm_std"], temp["znorm_zfact"])
+            
+        for i, channel_idx in enumerate(self.channel_idxes):    
+            temp = self.norm_info[channel_idx]
+            self.mult_unnormalizers[i] = Multiply(temp["shrink_fact"])
+    
+    def __call__(self, sample):
+        assert (len(sample.shape) == 3)
+        for i in range(self.nchannel):
+            sample[i] = self.mult_unnormalizers[i](sample[i, ...])
+            sample[i] = self.z_unnormalizers[i](sample[i, ...])
+            sample[i] = self.log_unnormalizers[i](sample[i, ...])
+        return sample
+
+class SehgalDataNormalizerScaledLogMinMax(object):
+    def __init__(self, normalization_info_file):
+        temp = np.load(normalization_info_file, allow_pickle=True)
+        self.norm_info = {key: temp[key].item() for key in temp}
+        self.channel_idxes = ["kappa", "ksz", "tsz", "ir_pts", "rad_pts"]
+        self.nchannel = len(self.channel_idxes)
+        self.log_normalizers = [None] * self.nchannel
+        self.minmax_normalizers = [None] * self.nchannel
+
+        for i, channel_idx in enumerate(self.channel_idxes):
+            temp = self.norm_info[channel_idx]
+            self.log_normalizers[i] = ToScaledLogScale(scaling=temp["lognorm_std"]) if i > 1 else Identity()
+
+        for i, channel_idx in enumerate(self.channel_idxes):
+            temp = self.norm_info[channel_idx]
+            minval = temp["minmax_min"]
+            maxval = temp["minmax_max"]
+            midpoint = temp["minmax_mean"]
+            self.minmax_normalizers[i] = MinMaxNormalize(midpoint, minval, maxval)
+        else:
+            pass
+
+    def __call__(self, sample):
+        assert (len(sample.shape) == 3)
+        for i in range(self.nchannel):
+            sample[i] = self.log_normalizers[i](sample[i, ...])
+            sample[i] = self.minmax_normalizers[i](sample[i, ...])
+        return sample
+
+
+class SehgalDataUnnormalizerScaledLogMinMax(object):
+    def __init__(self, normalization_info_file):
+        temp = np.load(normalization_info_file, allow_pickle=True)
+        self.norm_info = {key: temp[key].item() for key in temp}
+        self.channel_idxes = ["kappa", "ksz", "tsz", "ir_pts", "rad_pts"]
+        self.nchannel = len(self.channel_idxes)
+        self.log_unnormalizers = [None] * self.nchannel
+        self.minmax_unnormalizers = [None] * self.nchannel
+
+        for i, channel_idx in enumerate(self.channel_idxes):
+            temp = self.norm_info[channel_idx]
+            self.log_unnormalizers[i] = FromScaledLogScale(scaling=temp["lognorm_std"]) if i > 1 else Identity()
+
+        for i, channel_idx in enumerate(self.channel_idxes):
+            temp = self.norm_info[channel_idx]
+            minval = temp["minmax_min"]
+            maxval = temp["minmax_max"]
+            midpoint = temp["minmax_mean"]
+            self.minmax_unnormalizers[i] = MinMaxUnnormalize(midpoint, minval, maxval)
+        else:
+            pass
+
+    def __call__(self, sample):
+        assert (len(sample.shape) == 3)
+        for i in range(self.nchannel):
+            sample[i] = self.minmax_unnormalizers[i](sample[i, ...])
+            sample[i] = self.log_unnormalizers[i](sample[i, ...])
+        return sample
+
 class SehgalDataNormalizerSymLogMinMax(object):
     def __init__(self, normalization_info_file, log_norm_skip=[0, 1]):
         temp = np.load(normalization_info_file, allow_pickle=True)
@@ -112,60 +234,6 @@ class SehgalDataUnnormalizerPowZ(object):
         return sample
 
 
-class SehgalDataNormalizerScaledLogZ(object):
-    def __init__(self, normalization_info_file):
-        temp = np.load(normalization_info_file, allow_pickle=True)
-        self.norm_info = {key: temp[key].item() for key in temp}
-        self.channel_idxes = ["kappa", "ksz", "tsz", "ir_pts", "rad_pts"]
-        self.nchannel = len(self.channel_idxes)
-        self.log_normalizers = [None] * self.nchannel
-        self.z_normalizers = [None] * self.nchannel
-
-        for i, channel_idx in enumerate(self.channel_idxes):
-            temp = self.norm_info[channel_idx]
-            flip_sign = channel_idx == "tsz"
-            self.log_normalizers[i] = ToScaledLogScale(scaling=temp["std"]) if i > 1 else Identity()
-
-        for i, channel_idx in enumerate(self.channel_idxes):
-            temp = self.norm_info[channel_idx]
-            self.z_normalizers[i] = ZNormalize(temp["logmean"], temp["logstd"], 1.)
-        else:
-            pass
-
-    def __call__(self, sample):
-        assert (len(sample.shape) == 3)
-        for i in range(self.nchannel):
-            sample[i] = self.log_normalizers[i](sample[i, ...])
-            sample[i] = self.z_normalizers[i](sample[i, ...])
-        return sample
-
-
-class SehgalDataUnnormalizerScaledLogZ(object):
-    def __init__(self, normalization_info_file):
-        temp = np.load(normalization_info_file, allow_pickle=True)
-        self.norm_info = {key: temp[key].item() for key in temp}
-        self.channel_idxes = ["kappa", "ksz", "tsz", "ir_pts", "rad_pts"]
-        self.nchannel = len(self.channel_idxes)
-        self.log_unnormalizers = [None] * self.nchannel
-        self.z_unnormalizers = [None] * self.nchannel
-
-        for i, channel_idx in enumerate(self.channel_idxes):
-            temp = self.norm_info[channel_idx]
-            flip_sign = channel_idx == "tsz"
-            self.log_unnormalizers[i] = FromScaledLogScale(scaling=temp["std"]) if i > 1 else Identity()
-
-        for i, channel_idx in enumerate(self.channel_idxes):
-            temp = self.norm_info[channel_idx]
-            self.z_unnormalizers[i] = ZUnnormalize(temp["logmean"], temp["logstd"], 1.)
-        else:
-            pass
-
-    def __call__(self, sample):
-        assert (len(sample.shape) == 3)
-        for i in range(self.nchannel):
-            sample[i] = self.z_unnormalizers[i](sample[i, ...])
-            sample[i] = self.log_unnormalizers[i](sample[i, ...])
-        return sample
 
 
 class SehgalSubcomponets(object):
@@ -221,6 +289,12 @@ class RandomFlips(object):
 class Identity(object):
     def __call__(self, sample):
         return sample
+
+class Multiply(object):
+    def __init__(self, factor):
+        self.factor = factor
+    def __call__(self, sample):
+        return sample*self.factor
 
 
 class PowerNormalize(object):

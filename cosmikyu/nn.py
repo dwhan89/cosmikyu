@@ -52,4 +52,4 @@ class Reshape(nn.Module):
         self.shape = shape
 
     def forward(self, x):
-        return x.view(x.shape[-1], *self.shape)
+        return x.view(x.shape[0], *self.shape)

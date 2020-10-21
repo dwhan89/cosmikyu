@@ -182,8 +182,7 @@ class DCGAN_Generator(nn.Module):
             ret = self.model(z)
         return ret
 
-
-class DCGAN_Discriminator(nn.Module):
+class DCGAN_Discriminator_BASE(nn.Module):
     def __init__(self, shape, nconv_layer=2, nconv_fc=32, ngpu=1, kernal_size=5, stride=2, padding=2, normalize=True):
         super().__init__()
         self.shape = shape
@@ -210,11 +209,13 @@ class DCGAN_Discriminator(nn.Module):
                 discriminator_block(self.nconv_fc * self.stride ** i, self.nconv_fc * self.stride ** (i + 1),
                                     normalize=normalize))
 
-        layers.extend(
-            [cnn.Reshape((nconv_lc * self.ds_size ** 2,)), nn.Linear(nconv_lc * self.ds_size ** 2, 1)])
+        layers.extend(self.get_last_layer(nconv_lc))
 
         self.model = nn.Sequential(*layers)
 
+    def get_last_layer(self, nconv_lc):
+        raise NotImplemented()
+        
     def forward(self, img):
         if img.is_cuda and self.ngpu > 1:
             ret = nn.parallel.data_parallel(self.model, img, range(self.ngpu))
@@ -222,3 +223,19 @@ class DCGAN_Discriminator(nn.Module):
             ret = self.model(img)
         return ret
 
+class DCGAN_Discriminator(DCGAN_Discriminator_BASE):
+    def __init__(self, shape, nconv_layer=2, nconv_fc=32, ngpu=1, kernal_size=5, stride=2, padding=2, normalize=True):
+        super().__init__(shape=shape, nconv_layer=nconv_layer, nconv_fc=nconv_fc, ngpu=ngpu, kernal_size=kernal_size,
+                         stride=stride, padding=padding, normalize=normalize)
+
+    def get_last_layer(self, nconv_lc):
+        return [cnn.Reshape((nconv_lc * self.ds_size ** 2,)), nn.Linear(nconv_lc * self.ds_size ** 2, 1)]
+
+class UNET_Discriminator(DCGAN_Discriminator_BASE):
+    def __init__(self, shape, nconv_layer=2, nconv_fc=32, ngpu=1, kernal_size=5, stride=2, padding=2, normalize=True):
+        super().__init__(shape=shape, nconv_layer=nconv_layer, nconv_fc=nconv_fc, ngpu=ngpu, kernal_size=kernal_size,
+                         stride=stride, padding=padding, normalize=normalize)
+
+    def get_last_layer(self, nconv_lc):
+        nin_filt = self.nconv_fc * self.stride ** ((self.nconv_layer - 2) + 1)
+        return [nn.Conv2d(nin_filt, 1, self.kernal_size, stride=self.stride, padding=self.padding), nn.Sigmoid()]

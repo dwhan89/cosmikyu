@@ -12,7 +12,7 @@ compts = ["kappa", "ksz", "tsz", "ir_pts", "rad_pts"]
 compt_idxes = [0, 1, 2, 3, 4]
 shape = (len(compt_idxes), 128, 128)
 latent_dim = 256
-sample_interval = 500#1600
+sample_interval = 1600
 save_interval = 5
 batch_size = 32
 nepochs = 100
@@ -38,11 +38,11 @@ dataloader = torch.utils.data.DataLoader(
 
 STanh = cnn.ScaledTanh(30., 2./30.)
 experiment_id = "c0eb302516f64c87adf202830677a0da"
-model_dir = "/home/dwhan89/workspace/cosmikyu/output/sehgal_dcganwgp_201020/{}/model".format(experiment_id)
-DCGAN_WGP = gan.DCGAN_WGP("sehgal_dcganwgp_201020", shape, latent_dim, nconv_fcgen=64,
+model_dir = "/home/dwhan89/workspace/cosmikyu/output/sehgal_dcganwgp_211020/{}/model".format(experiment_id)
+DCGAN_WGP = gan.DCGAN_WGP("sehgal_dcganwgp_211020", shape, latent_dim, nconv_fcgen=64,
                           nconv_fcdis=64, cuda=cuda, ngpu=4, nconv_layer_gen=5, nconv_layer_disc=5, kernal_size=5, stride=2,
                           padding=2, output_padding=1, gen_act=STanh)
-DCGAN_WGP.load_states(model_dir, "_{}".format(25))
+#DCGAN_WGP.load_states(model_dir, "_{}".format(25))
 mlflow.set_experiment(DCGAN_WGP.identifier)
 with mlflow.start_run(experiment_id=DCGAN_WGP.experiment.experiment_id) as mlflow_run:
     torch.cuda.empty_cache()
@@ -56,7 +56,7 @@ with mlflow.start_run(experiment_id=DCGAN_WGP.experiment.experiment_id) as mlflo
         save_states=True,
         verbose=True,
         mlflow_run=mlflow_run,
-        lr=1e-4/2,
+        lr=1e-4,
         betas=(0.5, 0.9),
         lambda_gp=10.
     )

@@ -3,6 +3,17 @@ from pixell import enmap
 from orphics import maps as omaps
 from . import utils
 
+class MultiComptMultiply(object):
+    def __init__(self, multfactors=[]):
+        self.multfactors = multfactors
+        self.nchannels = len(multfactors)
+
+    def __call__(self, sample):
+        assert(sample.shape[0] == self.nchannels)
+        for i in range(self.nchannels):
+            sample[i] *= self.multfactors[i]
+        return sample
+
 
 class SehgalDataNormalizerScaledLogZShrink(object):
     def __init__(self, normalization_info_file):

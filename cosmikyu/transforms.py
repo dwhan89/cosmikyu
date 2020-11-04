@@ -2,24 +2,15 @@ import numpy as np
 from pixell import enmap
 from orphics import maps as omaps
 from . import utils
+from skimage.measure import block_reduce
 
-class MultiComptMultiply(object):
-    def __init__(self, multfactors=[]):
-        self.multfactors = multfactors
-        self.nchannels = len(multfactors)
-
-    def __call__(self, sample):
-        assert(sample.shape[0] == self.nchannels)
-        for i in range(self.nchannels):
-            sample[i] *= self.multfactors[i]
-        return sample
 
 
 class SehgalDataNormalizerScaledLogZShrink(object):
-    def __init__(self, normalization_info_file):
+    def __init__(self, normalization_info_file, channel_idxes=["kappa", "ksz", "tsz", "ir_pts", "rad_pts"]):
         temp = np.load(normalization_info_file, allow_pickle=True)
         self.norm_info = {key: temp[key].item() for key in temp}
-        self.channel_idxes = ["kappa", "ksz", "tsz", "ir_pts", "rad_pts"]
+        self.channel_idxes = channel_idxes
         self.nchannel = len(self.channel_idxes)
         self.log_normalizers = [None] * self.nchannel
         self.z_normalizers = [None] * self.nchannel
@@ -36,7 +27,6 @@ class SehgalDataNormalizerScaledLogZShrink(object):
         for i, channel_idx in enumerate(self.channel_idxes):    
             temp = self.norm_info[channel_idx]
             self.mult_normalizers[i] = Multiply(1./temp["shrink_fact"])
-        
 
     def __call__(self, sample):
         assert (len(sample.shape) == 3)
@@ -48,10 +38,10 @@ class SehgalDataNormalizerScaledLogZShrink(object):
 
 
 class SehgalDataUnnormalizerScaledLogZShrink(object):
-    def __init__(self, normalization_info_file):
+    def __init__(self, normalization_info_file, channel_idxes=["kappa", "ksz", "tsz", "ir_pts", "rad_pts"]):
         temp = np.load(normalization_info_file, allow_pickle=True)
         self.norm_info = {key: temp[key].item() for key in temp}
-        self.channel_idxes = ["kappa", "ksz", "tsz", "ir_pts", "rad_pts"]
+        self.channel_idxes = channel_idxes
         self.nchannel = len(self.channel_idxes)
         self.log_unnormalizers = [None] * self.nchannel
         self.z_unnormalizers = [None] * self.nchannel
@@ -455,3 +445,38 @@ class TakePS(object):
         lbin, ps = omaps.binned_power(sample, self.bin_edges, mask=self.taper)
         ps = ps if not self.return_dl else ps * (lbin * (lbin + 1) / (2 * np.pi))
         return lbin, ps
+
+
+class Crop(object):
+    def __init__(self, target_size):
+        self.target_size = target_size
+
+    def __call__(self, sample):
+        return sample[...,:self.target_size[-2], :self.target_size[-1]]
+
+class BlockReduce(object):
+    def __init__(self, block_size):
+        self.block_size = block_size
+
+    def __call__(self, sample):
+        return block_reduce(sample, block_size=self.block_size, func=np.mean)
+
+
+class NormalizeRGB(object):
+    def __call__(self, sample):
+        return (sample-127.5)/127.5
+
+class UNormalizeRGB(object):
+    def __call__(self, sample):
+        return (sample*127.5)+127.5
+
+class MultiComptMultiply(object):
+    def __init__(self, multfactors=[]):
+        self.multfactors = multfactors
+        self.nchannels = len(multfactors)
+
+    def __call__(self, sample):
+        assert(sample.shape[0] == self.nchannels)
+        for i in range(self.nchannels):
+            sample[i] *= self.multfactors[i]
+        return sample

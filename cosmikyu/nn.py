@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import numpy as np
 
 class Sinh(nn.Module):
     def __init__(self):
@@ -21,6 +22,44 @@ class SehgalActivationLayer(nn.Module):
             loc = sample[:, i, :, :] != torch.clamp(sample[:, i, :, :], minval, maxval)
             ret[:, i, :, :][loc] = 0.
         return ret
+
+class LinearFeature(nn.Module):
+    __constants__ = ['in_features', 'out_features']
+
+    def __init__(self, in_features, out_features, bias=True):
+        super(LinearFeature, self).__init__()
+        assert(out_features == in_features)
+        self.in_features = in_features
+        self.out_features = out_features
+        self.weight = nn.Parameter(torch.Tensor(out_features))
+        if bias:
+            self.bias = nn.Parameter(torch.Tensor(out_features))
+        else:
+            self.register_parameter('bias', None)
+        self.reset_parameters()
+
+
+    def reset_parameters(self):
+        nn.init.normal_(self.weight,1,0.02)
+        if self.bias is not None:
+            nn.init.normal_(self.bias,0,0.02)
+    
+    def forward(self, input):
+        device = torch.device("cuda" if input.is_cuda else "cpu")
+        eye = nn.Parameter(torch.zeros(input.shape), requires_grad=False).to(device=device)
+        idxes = np.arange(input.shape[-1])
+        eye[...,idxes, idxes] = 1.
+        ones = nn.Parameter(torch.ones(input.shape), requires_grad=False).to(device=device)
+        
+        mat_weight = torch.einsum("i,...ijk->...ijk", self.weight, eye)
+        mat_bias = torch.einsum("i,...ijk->...ijk", self.bias, ones)
+        
+        return torch.matmul(input,mat_weight)+mat_bias
+
+    def extra_repr(self):
+        return 'in_features={}, out_features={}, bias={}'.format(
+            self.in_features, self.out_features, self.bias is not None
+        )
 
 class ScaledTanh(nn.Module):
     def __init__(self, a=15., b=2. / 15.):

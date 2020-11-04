@@ -49,12 +49,13 @@ class LinearFeature(nn.Module):
         eye = nn.Parameter(torch.zeros(input.shape), requires_grad=False).to(device=device)
         idxes = np.arange(input.shape[-1])
         eye[...,idxes, idxes] = 1.
-        ones = nn.Parameter(torch.ones(input.shape), requires_grad=False).to(device=device)
-        
         mat_weight = torch.einsum("i,...ijk->...ijk", self.weight, eye)
-        mat_bias = torch.einsum("i,...ijk->...ijk", self.bias, ones)
-        
-        return torch.matmul(input,mat_weight)+mat_bias
+
+        if self.bias is not None:
+            ones = nn.Parameter(torch.ones(input.shape), requires_grad=False).to(device=device)
+            mat_bias = torch.einsum("i,...ijk->...ijk", self.bias, ones)
+
+        return torch.matmul(input,mat_weight) if self.bias is None else torch.matmul(input,mat_weight) + mat_bias 
 
     def extra_repr(self):
         return 'in_features={}, out_features={}, bias={}'.format(

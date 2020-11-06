@@ -4,7 +4,6 @@ import torch
 
 import cosmikyu.nn as cnn
 
-
 class WGAN_Generator(nn.Module):
     def __init__(self, shape, latent_dim, ngpu=1):
         super(WGAN_Generator, self).__init__()

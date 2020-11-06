@@ -376,7 +376,7 @@ class PIXGAN(DCGAN_SIMPLE):
     def __init__(self, identifier, shape, output_path=None, experiment_path=None, cuda=False, ngpu=1,
                  nconv_layer_gen=2, nconv_layer_disc=2, nconv_fcgen=32, nconv_fcdis=32, kernal_size=5, stride=2,
                  padding=2, output_padding=1, gen_act=[nn.Tanh()], nin_channel=3, nout_channel=3, nthresh_layer_gen=1,
-                 nthresh_layer_disc=1, dropoff=True):
+                 nthresh_layer_disc=1, dropout_rate=0.5):
         super().__init__(identifier, shape, latent_dim=1, output_path=output_path, experiment_path=experiment_path,
                          cuda=cuda, ngpu=ngpu, nconv_layer_gen=nconv_layer_gen, nconv_layer_disc=nconv_layer_disc,
                          nconv_fcgen=nconv_fcgen, nconv_fcdis=nconv_fcdis)
@@ -389,12 +389,12 @@ class PIXGAN(DCGAN_SIMPLE):
                                   "stride": stride, "padding": padding, "output_padding": output_padding,
                                   "nthresh_layer_gen": nthresh_layer_gen, "nthresh_layer_disc": nthresh_layer_disc,
                                   "gen_act": str([i.__class__.__name__ for i in gen_act]),
-                                  "dropoff": dropoff})
+                                  "dropout_rate": dropout_rate})
 
         self.generator = UNET_Generator(shape, nconv_layer=self.nconv_layer_gen, nconv_fc=self.nconv_fcgen, ngpu=self.ngpu,
                 kernal_size=kernal_size, stride=stride, padding=padding, output_padding=output_padding, normalize=True, 
                 activation=gen_act, nin_channel=self.nin_channel, nout_channel=self.nout_channel,
-                 nthresh_layer=nthresh_layer_gen, dropoff=dropoff).to(device=self.device) 
+                 nthresh_layer=nthresh_layer_gen, dropout_rate=dropout_rate).to(device=self.device)
         self.discriminator =  UNET_Discriminator(shape, nconv_layer=self.nconv_layer_disc, nconv_fc=self.nconv_fcdis, ngpu=self.ngpu,
                 kernal_size=kernal_size, stride=stride, padding=padding, normalize=True, nthresh_layer=nthresh_layer_disc).to(device=self.device)
         # Initialize weights
@@ -519,12 +519,12 @@ class PIXGAN_WGP(PIXGAN):
     def __init__(self, identifier, shape, output_path=None, experiment_path=None, cuda=False, ngpu=1,
                  nconv_layer_gen=2, nconv_layer_disc=2, nconv_fcgen=32, nconv_fcdis=32, kernal_size=5, stride=2,
                  padding=2, output_padding=1, gen_act=nn.Tanh(), nin_channel=3, nout_channel=3, nthresh_layer_gen=1,
-                 nthresh_layer_disc=1, dropoff=True):
+                 nthresh_layer_disc=1, dropout_rate=0.5):
 
         super().__init__(identifier, shape, output_path=output_path, experiment_path=experiment_path, cuda=cuda, ngpu=ngpu,
                  nconv_layer_gen=nconv_layer_gen, nconv_layer_disc=nconv_layer_disc, nconv_fcgen=nconv_fcgen, nconv_fcdis=nconv_fcdis,
                  kernal_size=kernal_size, stride=stride, padding=padding, output_padding=output_padding, gen_act=gen_act, 
-                 nin_channel=nin_channel, nout_channel=nout_channel, nthresh_layer_gen=nthresh_layer_gen, nthresh_layer_disc=nthresh_layer_disc, dropoff=dropoff)
+                 nin_channel=nin_channel, nout_channel=nout_channel, nthresh_layer_gen=nthresh_layer_gen, nthresh_layer_disc=nthresh_layer_disc, dropout_rate=dropout_rate)
         del self.discriminator, self.adversarial_loss, self.l1_loss
         self.discriminator =  UNET_Discriminator_WGP(shape, nconv_layer=self.nconv_layer_disc, nconv_fc=self.nconv_fcdis, ngpu=self.ngpu,
                         kernal_size=kernal_size, stride=stride, padding=padding, normalize=False,

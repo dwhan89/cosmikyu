@@ -5,9 +5,21 @@ import lmdb
 
 
 class SehgalDataSet(Dataset):
-    def __init__(self, dataset_root, data_type="train", transforms=[], dummy_label=False, dtype=np.float64, shape=(5,128,128)):
+    """Dataset class to load Sehgal et al. dataset used in Han et. al 2020 GAN project
+    """
+    def __init__(self, dataset_root, data_identifier="train", transforms=[], dummy_label=False, dtype=np.float64, shape=(5, 128, 128)):
+        """
+
+        Args:
+            dataset_root (str): path to where dataset is located
+            data_identifier (str): a string to identify each Sehgal data set (i.e "train", "test", etc)
+            transforms (list): a sequence of transformation to be applied to this data set.
+            dummy_label (boolean): pytorch Dataloader classes expect a label for each data sample. Set "true" to return a dummy label
+            dtype (data type): a data type of sample
+            shape (tuple): a shape of each sample
+        """
         self.dataset_root = dataset_root
-        self.dataset_dir = os.path.join(self.dataset_root, "sehgal_{}".format(data_type))
+        self.dataset_dir = os.path.join(self.dataset_root, "sehgal_{}".format(data_identifier))
         self.shape = shape
         self.lmdb_env = lmdb.open(self.dataset_dir, readonly=True, lock=False)
         self.transforms = transforms

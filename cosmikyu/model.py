@@ -270,7 +270,7 @@ class UNET_Discriminator_WGP(DCGAN_Discriminator_BASE):
 class UNET_Generator(nn.Module):
     def __init__(self, shape, nconv_layer=2, nconv_fc=32, ngpu=1, kernal_size=5, stride=2, padding=2,
                  output_padding=1, normalize=True, activation=None, nin_channel=3, nout_channel=3,
-                 nthresh_layer=1):
+                 nthresh_layer=1, dropoff=True):
         super().__init__()
         self.shape = shape 
         self.nconv_layer = nconv_layer
@@ -354,7 +354,7 @@ class UNET_Generator(nn.Module):
         for i in range(self.nthresh_layer):
             up_idx = "up%d" %i
             upin_channel = nconv_lc if i == 0 else nconv_lc*2
-            dropout_rate = 0.5 if i > 0 else 0.0
+            dropout_rate = 0.5 if i > 0 and dropoff else 0.0
             self.model_dict[up_idx] = UNetUP(upin_channel, nconv_lc, normalize=True,dropout_rate=dropout_rate)
         
         ## up layers

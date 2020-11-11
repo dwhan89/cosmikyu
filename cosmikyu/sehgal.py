@@ -213,7 +213,7 @@ class SehgalNetwork(object):
         LF = cnn.LinearFeature(5, 5, bias=True)
         nconv_layer_gen = 4
         nthresh_layer_gen = 0
-        forse_generator = model.FORSE_Generator(self.stamp_shape, nconv_layer=nconv_layer_gen, nconv_fc=nconv_fc,
+        self.forse_generator = model.FORSE_Generator(self.stamp_shape, nconv_layer=nconv_layer_gen, nconv_fc=nconv_fc,
                                                 ngpu=ngpu,
                                                 kernal_size=kernal_size, stride=stride, padding=padding,
                                                 output_padding=output_padding, normalize=True,
@@ -221,7 +221,7 @@ class SehgalNetwork(object):
                                                 nthresh_layer=nthresh_layer_gen, dropout_rate=dropout_rate).to(
             device=self.device)
         print(f"Loading {tuner_state_file}")
-        forse_generator.load_state_dict(torch.load(tuner_state_file, map_location=self.device))
+        self.forse_generator.load_state_dict(torch.load(tuner_state_file, map_location=self.device))
 
         self.pixgan_generator.eval()
         self.forse_generator.eval()

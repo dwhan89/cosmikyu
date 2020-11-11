@@ -1,9 +1,9 @@
 import numpy as np
-from pixell import enmap
 from orphics import maps as omaps
-from . import utils
+from pixell import enmap
 from skimage.measure import block_reduce
 
+from . import utils
 
 
 class SehgalDataNormalizerScaledLogZShrink(object):
@@ -20,13 +20,13 @@ class SehgalDataNormalizerScaledLogZShrink(object):
             temp = self.norm_info[channel_idx]
             self.log_normalizers[i] = ToScaledLogScale(scaling=temp["lognorm_std"]) if i > 1 else Identity()
 
-        for i, channel_idx in enumerate(self.channel_idxes):    
+        for i, channel_idx in enumerate(self.channel_idxes):
             temp = self.norm_info[channel_idx]
             self.z_normalizers[i] = ZNormalize(temp["znorm_mean"], temp["znorm_std"], temp["znorm_zfact"])
-            
-        for i, channel_idx in enumerate(self.channel_idxes):    
+
+        for i, channel_idx in enumerate(self.channel_idxes):
             temp = self.norm_info[channel_idx]
-            self.mult_normalizers[i] = Multiply(1./temp["shrink_fact"])
+            self.mult_normalizers[i] = Multiply(1. / temp["shrink_fact"])
 
     def __call__(self, sample):
         assert (len(sample.shape) == 3)
@@ -47,19 +47,18 @@ class SehgalDataUnnormalizerScaledLogZShrink(object):
         self.z_unnormalizers = [None] * self.nchannel
         self.mult_unnormalizers = [None] * self.nchannel
 
-
         for i, channel_idx in enumerate(self.channel_idxes):
             temp = self.norm_info[channel_idx]
             self.log_unnormalizers[i] = FromScaledLogScale(scaling=temp["lognorm_std"]) if i > 1 else Identity()
 
-        for i, channel_idx in enumerate(self.channel_idxes):    
+        for i, channel_idx in enumerate(self.channel_idxes):
             temp = self.norm_info[channel_idx]
             self.z_unnormalizers[i] = ZUnnormalize(temp["znorm_mean"], temp["znorm_std"], temp["znorm_zfact"])
-            
-        for i, channel_idx in enumerate(self.channel_idxes):    
+
+        for i, channel_idx in enumerate(self.channel_idxes):
             temp = self.norm_info[channel_idx]
             self.mult_unnormalizers[i] = Multiply(temp["shrink_fact"])
-    
+
     def __call__(self, sample):
         assert (len(sample.shape) == 3)
         for i in range(self.nchannel):
@@ -67,6 +66,7 @@ class SehgalDataUnnormalizerScaledLogZShrink(object):
             sample[i] = self.z_unnormalizers[i](sample[i, ...])
             sample[i] = self.log_unnormalizers[i](sample[i, ...])
         return sample
+
 
 class SehgalDataNormalizerScaledLogMinMax(object):
     def __init__(self, normalization_info_file):
@@ -126,6 +126,7 @@ class SehgalDataUnnormalizerScaledLogMinMax(object):
             sample[i] = self.minmax_unnormalizers[i](sample[i, ...])
             sample[i] = self.log_unnormalizers[i](sample[i, ...])
         return sample
+
 
 class SehgalDataNormalizerSymLogMinMax(object):
     def __init__(self, normalization_info_file, log_norm_skip=[0, 1]):
@@ -235,8 +236,6 @@ class SehgalDataUnnormalizerPowZ(object):
         return sample
 
 
-
-
 class SehgalSubcomponets(object):
     def __init__(self, idxes=None):
         if idxes is None:
@@ -291,11 +290,13 @@ class Identity(object):
     def __call__(self, sample):
         return sample
 
+
 class Multiply(object):
     def __init__(self, factor):
         self.factor = factor
+
     def __call__(self, sample):
-        return sample*self.factor
+        return sample * self.factor
 
 
 class PowerNormalize(object):
@@ -452,7 +453,45 @@ class Crop(object):
         self.target_size = target_size
 
     def __call__(self, sample):
-        return sample[...,:self.target_size[-2], :self.target_size[-1]]
+        return sample[..., :self.target_size[-2], :self.target_size[-1]]
+
+
+class Batch(object):
+    # "https://stackoverflow.com/questions/16873441/form-a-big-2d-array-from-multiple-smaller-2d-arrays/16873755#16873755"
+    def __init__(self, block_shape):
+        self.bshape = block_shape
+
+    def __call__(self, sample):
+        if sample.ndim == 2:
+            sample = sample[np.newaxis, np.newaxis, ...]
+        elif sample.ndim == 3:
+            sample = sample[:, np.newaxis, ...]
+        else:
+            assert (False)
+
+        nch = sample.shape[0]
+        assert (nch == self.bshape[0])
+        h, w = sample.shape[-2], sample.shape[-1]
+        nrows, ncols = self.bshape[-2], self.bshape[-1]
+        return (sample.reshape(nch, h // nrows, nrows, -1, ncols)
+                .swapaxes(2, 3)
+                .reshape(nch, -1, nrows, ncols).swapaxes(0, 1))
+
+
+class UnBatch(object):
+    # "https://stackoverflow.com/questions/16873441/form-a-big-2d-array-from-multiple-smaller-2d-arrays/16873755#16873755"
+    def __init__(self, block_shape):
+        self.bshape = block_shape
+
+    def __call__(self, sample):
+        assert (sample.ndim == 4)
+        nbatch, nch = sample.shape[:2]
+        nrows, ncols = sample.shape[2:]
+        sample = sample.swapaxes(0, 1)
+        h, w = self.bshape[-2], self.bshape[-1]
+        return (sample.reshape(nch, h // nrows, -1, nrows, ncols)
+                .swapaxes(2, 3)
+                .reshape(nch, 1, h, w).swapaxes(0, 1))
 
 class BlockReduce(object):
     def __init__(self, block_size):
@@ -464,11 +503,13 @@ class BlockReduce(object):
 
 class NormalizeRGB(object):
     def __call__(self, sample):
-        return (sample-127.5)/127.5
+        return (sample - 127.5) / 127.5
+
 
 class UNormalizeRGB(object):
     def __call__(self, sample):
-        return (sample*127.5)+127.5
+        return (sample * 127.5) + 127.5
+
 
 class MultiComptMultiply(object):
     def __init__(self, multfactors=[]):
@@ -476,7 +517,7 @@ class MultiComptMultiply(object):
         self.nchannels = len(multfactors)
 
     def __call__(self, sample):
-        assert(sample.shape[0] == self.nchannels)
+        assert (sample.shape[0] == self.nchannels)
         for i in range(self.nchannels):
             sample[i] *= self.multfactors[i]
         return sample

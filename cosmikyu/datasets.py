@@ -1,13 +1,16 @@
-from torch.utils.data import Dataset
 import os
-import numpy as np
+
 import lmdb
+import numpy as np
+from torch.utils.data import Dataset
 
 
 class SehgalDataSet(Dataset):
     """Dataset class to load Sehgal et al. dataset used in Han et. al 2020 GAN project
     """
-    def __init__(self, dataset_root, data_identifier="train", transforms=[], dummy_label=False, dtype=np.float64, shape=(5, 128, 128)):
+
+    def __init__(self, dataset_root, data_identifier="train", transforms=[], dummy_label=False, dtype=np.float64,
+                 shape=(5, 128, 128)):
         """
 
         Args:
@@ -43,11 +46,11 @@ class SehgalDataSet(Dataset):
 
 class DataSetJoiner(Dataset):
     def __init__(self, datasets=[], dummy_label=False, dtype=np.float64, shape=(10, 128, 128)):
-        assert(len(datasets) > 0)
+        assert (len(datasets) > 0)
         self.nsample = 0
         for db in datasets:
             self.nsample = max(self.nsample, len(db))
-        print("Number of joined samples are {}".format(self.nsample)) 
+        print("Number of joined samples are {}".format(self.nsample))
         self.datasets = datasets
         self.dtype = dtype
         self.shape = shape
@@ -66,13 +69,12 @@ class DataSetJoiner(Dataset):
             data[sidx:eidx, ...] = sample.copy()
             sidx = eidx
             del sample
-        assert(self.shape[0] == eidx) 
+        assert (self.shape[0] == eidx)
         return [data, 0] if self.dummy_label else data
+
 
 class MapDataSet(Dataset):
     def __init__(self, dataset_root, data_type="train", transforms=[], dummy_label=False):
-        from os import listdir
-        from skimage import io
         self.dataset_root = dataset_root
         self.dataset_file = os.path.join(self.dataset_root, "{}.npy".format(data_type))
         self.storage = np.load(self.dataset_file)
@@ -80,7 +82,7 @@ class MapDataSet(Dataset):
         self.shape = (6, 600, 600)  # fixed for now
         self.transforms = transforms
         self.dummy_label = dummy_label
-    
+
     def __len__(self):
         return self.nmaps
 
@@ -89,4 +91,3 @@ class MapDataSet(Dataset):
         for transform in self.transforms:
             data = transform(data)
         return [data, 0] if self.dummy_label else data
-

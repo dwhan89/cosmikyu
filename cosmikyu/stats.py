@@ -1,8 +1,10 @@
-from . import mpi, config, utils
-import numpy as np
 import os
+
+import numpy as np
 from fast_histogram import histogram1d
 from scipy.stats import chi2
+
+from . import mpi, utils
 
 
 class STATS(object):

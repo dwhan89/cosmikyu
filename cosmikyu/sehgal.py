@@ -1,10 +1,13 @@
+import os
+
+import healpy as hp
 import numpy as np
 import scipy.interpolate
-import os
-from pixell import enmap, utils, curvedsky
-import healpy as hp
-from . import transforms, nn as cnn, model
 import torch
+from orphics import maps as omaps
+from pixell import enmap, utils, curvedsky, powspec
+
+from . import transforms, nn as cnn, model
 
 
 class Sehgal10Reprojected(object):
@@ -170,10 +173,15 @@ class Sehgal10Reprojected(object):
 
 
 class SehgalNetwork(object):
-    def __init__(self, shape, wcs, cuda, ngpu, norm_info_file, pixgan_state_file, tuner_state_file):
-        self.shape = shape
+    def __init__(self, shape, wcs, cuda, ngpu, nbatch, norm_info_file, pixgan_state_file, tuner_state_file,
+                 camb_scalar_spec_file, taper_width):
+        self.shape = shape[-2:]
         self.wcs = wcs
+        self.template = enmap.zeros(shape, wcs)
         self.stamp_shape = (5, 128, 128)
+        self.nbatch = nbatch
+        self.lmax = 10000
+        self.taper_width
 
         self.cuda = cuda
         self.ngpu = 0 if not self.cuda else ngpu
@@ -195,6 +203,13 @@ class SehgalNetwork(object):
         output_padding = 0
         dropout_rate = 0
 
+        ## prepare input clkk
+        ps_scalar = powspec.read_camb_scalar(camb_scalar_spec_file)
+        clpp = ps_scalar[1][0][0][:self.lmax + 1]
+        L = np.arange(self.lmax + 1)
+        clkk = clpp * (L * (L + 1)) ** 2 / 4
+        self.clkk_spec = (L, clkk)
+
         ## pixgan layer
         LF = cnn.LinearFeature(4, 4)
         nconv_layer_gen = 4
@@ -214,14 +229,115 @@ class SehgalNetwork(object):
         nconv_layer_gen = 4
         nthresh_layer_gen = 0
         self.forse_generator = model.FORSE_Generator(self.stamp_shape, nconv_layer=nconv_layer_gen, nconv_fc=nconv_fc,
-                                                ngpu=ngpu,
-                                                kernal_size=kernal_size, stride=stride, padding=padding,
-                                                output_padding=output_padding, normalize=True,
-                                                activation=[LF, STanh], nin_channel=5, nout_channel=5,
-                                                nthresh_layer=nthresh_layer_gen, dropout_rate=dropout_rate).to(
+                                                     ngpu=ngpu,
+                                                     kernal_size=kernal_size, stride=stride, padding=padding,
+                                                     output_padding=output_padding, normalize=True,
+                                                     activation=[LF, STanh], nin_channel=5, nout_channel=5,
+                                                     nthresh_layer=nthresh_layer_gen, dropout_rate=dropout_rate).to(
             device=self.device)
         print(f"Loading {tuner_state_file}")
         self.forse_generator.load_state_dict(torch.load(tuner_state_file, map_location=self.device))
 
         self.pixgan_generator.eval()
         self.forse_generator.eval()
+
+    def _get_beam(self, beam_fwhm=0.9, ell=None):
+        beam_fwhm = np.deg2rad(beam_fwhm / 60.)
+        sigma = beam_fwhm / (2. * np.sqrt(2. * np.log(2)))
+        ell = ell if ell is not None else np.arange(self.lmax + 1)
+        f_ell = np.exp(-(ell) ** 2. * sigma ** 2. / 2)
+        return ell, f_ell
+
+    def _generate_input_kappa(self, seed=None):
+        np.random.seed(seed)
+        L, clkk = self.clkk_spec
+        alm = curvedsky.rand_alm(clkk)
+        alm = hp.almxfl(alm, self._get_beam()[1])
+        return curvedsky.alm2map(alm, self.template.copy())[np.newaxis, ...]
+
+    def generate_samples(self, seed=None, ret_corr=False,
+                         wrap=True, wrap_mode="reflect", edge_blend=True, verbose=True):
+        gkmap = self._generate_input_kappa(seed=seed)
+        nch, Ny, Nx = gkmap.shape
+        ny, nx = self.stamp_shape[-2:]
+        padded_shape = (np.ceil([Ny / ny, Nx / nx]) * np.array([ny, nx])).astype(np.int)
+        Ny_pad, Nx_pad = padded_shape[0], padded_shape[1]
+
+        if wrap:
+            input_imgs = np.pad(gkmap, ((0, 0), (0, Ny_pad - Ny), (0, Nx_pad - Nx)), mode=wrap_mode)
+
+        def process_ml(input_imgs, ret_corr, batch_maker):
+            input_imgs = batch_maker(input_imgs)
+            nsample = input_imgs.shape[0]
+            output_imgs = np.zeros((nsample, 5, ny, nx))
+            if ret_corr:
+                corr = output_imgs.copy()
+            ctr = 0
+            for batch in np.array_split(np.arange(input_imgs.shape[0]), self.nbatch):
+                input_tensor = torch.autograd.Variable(self.Tensor(input_imgs[batch].copy()))
+                ret = self.pixgan_generator(input_tensor).detach()
+                ret = torch.cat((input_tensor, ret), 1)
+                if ret_corr: corr[batch] = ret.data.to(device="cpu").numpy()
+                ret = self.forse_generator(ret).detach()
+                output_imgs[batch] = ret.data.to(device="cpu").numpy()
+                ctr += 1
+                if verbose: print(f"batch {ctr} completed")
+
+            return (output_imgs, None) if not ret_corr else (output_imgs, corr)
+
+        unbatch_maker = transforms.UnBatch((nch, Ny_pad, Nx_pad))
+
+        def post_process(output_imgs, resd, ret_corr, unbatch_maker):
+            output_imgs = unbatch_maker(output_imgs)
+            output_imgs = output_imgs[0, ..., :Ny, :Nx]
+            if ret_corr:
+                corr = unbatch_maker(resd)
+                corr = corr[0, ..., :Ny, :Nx]
+                corr = output_imgs - corr
+            return output_imgs, corr
+
+        if verbose: print("make the primary images")
+        batch_maker = transforms.Batch((nch, ny, nx))
+        output_imgs, corr = process_ml(input_imgs, ret_corr, batch_maker)
+        output_imgs, corr = post_process(output_imgs, corr, ret_corr, unbatch_maker)
+        if edge_blend:
+            if verbose: print("make the blending images")
+
+            ## inner part
+            def get_taper(input_imgs, ywidth, xwidth, batch_maker, unbatch_maker):
+                ## taper can be cahsed ...
+                taper = batch_maker(input_imgs * 0)
+                taper_stamp = omaps.cosine_window(ny, nx, ywidth, xwidth)
+                minval = np.min(taper_stamp[taper_stamp != 0])
+                taper_stamp[taper_stamp == 0] = minval
+                taper[..., :, :] = taper_stamp
+                taper = unbatch_maker(taper)[0]
+                return taper[..., :Ny, :Nx]
+
+            def get_taper_imgs(input_imgs, shifts):
+                y_shift, x_shift = shifts
+                if y_shift > 0:
+                    taper_imgs = input_imgs[..., y_shift:-1 * y_shift, :].copy()
+                    UB = transforms.UnBatch((nch, Ny_pad - 2 * y_shift, Nx_pad))
+                else:
+                    taper_imgs = input_imgs[..., :, x_shift:-1 * x_shift].copy()
+                    UB = transforms.UnBatch((nch, Ny_pad, Nx_pad - 2 * x_shift))
+                taper_imgs, _ = process_ml(taper_imgs, True, batch_maker=batch_maker)
+                taper_imgs, _ = post_process(taper_imgs, None, ret_corr=False, unbatch_maker=unbatch_maker)
+                return taper_imgs
+
+            if verbose: print("starting vertical blending")
+            taper = get_taper(input_imgs, self.taper_width, 0, batch_maker, unbatch_maker)
+            output_imgs[..., 64:Ny_pad - 64, :] = (output_imgs * taper)[..., 64:Ny_pad - 64, :]
+            output_imgs[..., 64:Ny_pad - 64, :] += (
+                    get_taper_imgs(input_imgs, [64, 0]) * (1 - taper[..., 64:Ny_pad - 64, :]))
+            if verbose: print("starting horizontal blending")
+            taper = get_taper(input_imgs, 0, self.taper_width)
+            output_imgs[..., :, 64:Nx_pad - 64] = (output_imgs * taper)[..., :, 64:Nx_pad - 64]
+            output_imgs[..., :, 64:Nx_pad - 64] += (
+                    get_taper_imgs(input_imgs, [0, 64]) * (1 - taper[..., :, 64:Nx_pad - 64]))
+
+        output_imgs = self.unnormalizer(output_imgs)
+        corr = self.unnormalizer(corr)
+
+        return output_imgs if not ret_corr else (output_imgs, corr)

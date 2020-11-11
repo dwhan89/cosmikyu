@@ -41,6 +41,34 @@ class SehgalDataSet(Dataset):
         return [data, 0] if self.dummy_label else data
 
 
+class DataSetJoiner(Dataset):
+    def __init__(self, datasets=[], dummy_label=False, dtype=np.float64, shape=(10, 128, 128)):
+        assert(len(datasets) > 0)
+        self.nsample = 0
+        for db in datasets:
+            self.nsample = max(self.nsample, len(db))
+        print("Number of joined samples are {}".format(self.nsample)) 
+        self.datasets = datasets
+        self.dtype = dtype
+        self.shape = shape
+        self.dummy_label = dummy_label
+
+    def __len__(self):
+        return self.nsample
+
+    def __getitem__(self, idx):
+        data = np.zeros(self.shape, dtype=self.dtype)
+        sidx = 0
+        for db in self.datasets:
+            sample = db[idx].astype(self.dtype)
+            nchannel = sample.shape[0]
+            eidx = sidx + nchannel
+            data[sidx:eidx, ...] = sample.copy()
+            sidx = eidx
+            del sample
+        assert(self.shape[0] == eidx) 
+        return [data, 0] if self.dummy_label else data
+
 class MapDataSet(Dataset):
     def __init__(self, dataset_root, data_type="train", transforms=[], dummy_label=False):
         from os import listdir

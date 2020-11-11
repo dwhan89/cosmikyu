@@ -13,7 +13,7 @@ import mlflow
 import mlflow.pytorch
 
 from cosmikyu.model import DCGAN_SIMPLE_Generator, DCGAN_SIMPLE_Discriminator, DCGAN_Generator, DCGAN_Discriminator, \
-    WGAN_Generator, WGAN_Discriminator, UNET_Generator, UNET_Discriminator, UNET_Discriminator_WGP
+    WGAN_Generator, WGAN_Discriminator, UNET_Generator, UNET_Discriminator, UNET_Discriminator_WGP, FORSE_Generator
 
 
 class GAN(object):
@@ -431,7 +431,6 @@ class PIXGAN(DCGAN_SIMPLE):
         else:
             self.generator.train()
             self.discriminator.train()
-
         input_imgs = Variable(self.Tensor(input_imgs[:,:self.nin_channel,...]))
         ret = self.generator(input_imgs).detach()
         if concat:
@@ -439,8 +438,8 @@ class PIXGAN(DCGAN_SIMPLE):
         return ret
     
     def train(self, dataloader, nepochs=200, ncritics=5, sample_interval=1000,
-              save_interval=10000, load_states=True, save_states=True, verbose=True, mlflow_run=None, **kwargs):
-        kwargs.update({"nepochs": nepochs, "ncritics": ncritics})
+              save_interval=10000, load_states=True, save_states=True, verbose=True, mlflow_run=None, disc_conditional=True, **kwargs):
+        kwargs.update({"nepochs": nepochs, "ncritics": ncritics, "disc_conditional" : disc_conditional})
         kwargs.update(self.model_params)
         # Logging parameters
         if mlflow_run:
@@ -469,13 +468,14 @@ class PIXGAN(DCGAN_SIMPLE):
             for i, sample in enumerate(dataloader):
                 imgs = sample[0]
                 input_imgs = Variable(imgs[:,:self.nin_channel,...].type(self.Tensor))
-                real_imgs_cat = Variable(imgs.type(self.Tensor))
+                real_imgs_cat = Variable(imgs.type(self.Tensor) if disc_conditional else imgs[:,self.nin_channel:,...].type(self.Tensor))
+              
 
                 opt_disc.zero_grad()
                 # Generate a batch of images
                 gen_imgs = self.generator(input_imgs)
-                gen_imgs_cat = torch.cat((input_imgs, gen_imgs), 1).detach()
-                
+                gen_imgs_cat = torch.cat((input_imgs, gen_imgs), 1).detach() if disc_conditional else gen_imgs.detach()
+
                 # Adversarial loss 
                 loss_D = self._eval_discriminator_loss(real_imgs_cat, gen_imgs_cat, **kwargs)
                 mlflow.log_metric("D loss", loss_D.item())
@@ -489,7 +489,7 @@ class PIXGAN(DCGAN_SIMPLE):
 
                     # Generate a batch of images
                     gen_imgs = self.generator(input_imgs)
-                    gen_imgs_cat = torch.cat((input_imgs, gen_imgs), 1)
+                    gen_imgs_cat = torch.cat((input_imgs, gen_imgs), 1) if disc_conditional else gen_imgs
                     # Adversarial loss\
                     loss_G = self._eval_generator_loss(real_imgs_cat, gen_imgs_cat, **kwargs)
                     mlflow.log_metric("G loss", loss_G.item())
@@ -502,7 +502,10 @@ class PIXGAN(DCGAN_SIMPLE):
                                  loss_G.item())
                               )
                 if batches_done % sample_interval == 0:
-                    temp = torch.cat((real_imgs_cat.data[:1,self.nin_channel:,...], gen_imgs_cat.data[:5,self.nin_channel:,...]), 0)
+                    if disc_conditional:
+                        temp = torch.cat((real_imgs_cat.data[:1,self.nin_channel:,...], gen_imgs_cat.data[:5,self.nin_channel:,...]), 0)
+                    else:
+                        temp = torch.cat((real_imgs_cat.data[:1,...], gen_imgs_cat.data[:5,...]), 0)
                     temp = temp if gen_imgs_cat.shape[-3] < 4 else torch.unsqueeze(torch.sum(temp, 1), 1)
                     save_image(temp, os.path.join(artifacts_path, "%d.png" % batches_done), normalize=True,
                                nrow=int(temp.shape[0] / 2.))
@@ -533,6 +536,7 @@ class PIXGAN_WGP(PIXGAN):
         self.discriminator.apply(self._weights_init_normal)
 
 
+
     def _eval_generator_loss(self, real_imgs, gen_imgs, **kwargs):
         return -torch.mean(self.discriminator(gen_imgs))
 
@@ -561,10 +565,36 @@ class PIXGAN_WGP(PIXGAN):
 
     def train(self, dataloader, nepochs=200, ncritics=5, sample_interval=1000,
               save_interval=10000, load_states=True, save_states=True, verbose=True, mlflow_run=None,  lr=0.0002,
-              betas=(0.5, 0.999), lambda_gp= 10):
+              betas=(0.5, 0.999), lambda_gp= 10, disc_conditional=True):
         return super().train(dataloader, nepochs=nepochs, ncritics=ncritics, sample_interval=sample_interval,
                       save_interval=save_interval, load_states=load_states, save_states=save_states, verbose=verbose,
-                      mlflow_run=mlflow_run, lr=lr, betas=betas, lambda_gp=lambda_gp)
+                      mlflow_run=mlflow_run, lr=lr, betas=betas, lambda_gp=lambda_gp, disc_conditional=disc_conditional)
+
+class FORSE_WGP(PIXGAN_WGP):
+    def __init__(self, identifier, shape, output_path=None, experiment_path=None, cuda=False, ngpu=1,
+                 nconv_layer_gen=2, nconv_layer_disc=2, nconv_fcgen=32, nconv_fcdis=32, kernal_size=5, stride=2,
+                 padding=2, output_padding=1, gen_act=nn.Tanh(), nin_channel=3, nout_channel=3, nthresh_layer_gen=1,
+                 nthresh_layer_disc=1, dropout_rate=0.5):
+
+        super().__init__(identifier, shape, output_path=output_path, experiment_path=experiment_path, cuda=cuda, ngpu=ngpu,
+                 nconv_layer_gen=nconv_layer_gen, nconv_layer_disc=nconv_layer_disc, nconv_fcgen=nconv_fcgen, nconv_fcdis=nconv_fcdis,
+                 kernal_size=kernal_size, stride=stride, padding=padding, output_padding=output_padding, gen_act=gen_act, 
+                 nin_channel=nin_channel, nout_channel=nout_channel, nthresh_layer_gen=nthresh_layer_gen, nthresh_layer_disc=nthresh_layer_disc, dropout_rate=dropout_rate)
+        
+        self.generator = FORSE_Generator(shape, nconv_layer=self.nconv_layer_gen, nconv_fc=self.nconv_fcgen, ngpu=self.ngpu,
+                kernal_size=kernal_size, stride=stride, padding=padding, output_padding=output_padding, normalize=True,
+                activation=gen_act, nin_channel=self.nin_channel, nout_channel=self.nout_channel,
+                nthresh_layer=nthresh_layer_gen, dropout_rate=dropout_rate).to(device=self.device)
+        # Initialize weights
+        self.generator.apply(self._weights_init_normal)
+
+
+    def train(self, dataloader, nepochs=200, ncritics=5, sample_interval=1000,
+                    save_interval=10000, load_states=True, save_states=True, verbose=True, mlflow_run=None, lr=0.0002,
+                betas=(0.5, 0.999), lambda_gp=10):
+            super().train(dataloader, nepochs=nepochs, ncritics=ncritics, sample_interval=sample_interval,
+                    save_interval=save_interval, load_states=load_states, save_states=save_states, verbose=verbose,
+                    mlflow_run=mlflow_run, lr=lr, betas=betas, lambda_gp=lambda_gp, disc_conditional=False)
 
 class DCGAN_WGP(DCGAN):
     def __init__(self, identifier, shape, latent_dim, output_path=None, experiment_path=None, cuda=False, ngpu=1,
@@ -583,7 +613,7 @@ class DCGAN_WGP(DCGAN):
 
         # Initialize weights
         self.discriminator.apply(self._weights_init_normal)
-    
+   
     def _eval_generator_loss(self, real_imgs, gen_imgs):
         return -torch.mean(self.discriminator(gen_imgs))
 

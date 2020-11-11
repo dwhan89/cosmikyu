@@ -87,3 +87,13 @@ def str2bool(v):
         return False
     else:
         raise TypeError("Can't convert 'str' object to 'boolean'")
+
+def get_gaussian_beam(l, beam_fwhm):
+    " return f"
+    beam_fwhm = np.deg2rad(beam_fwhm/60.)
+    sigma     = beam_fwhm/(2.*np.sqrt(2.*np.log(2)))
+    f_ell = np.exp(-(l)**2.*sigma**2./2)
+    return l, f_ell
+    
+
+

@@ -71,6 +71,14 @@ class ScaledTanh(nn.Module):
     def forward(self, sample):
         return torch.tanh(sample * self.b) * self.a
 
+class ScaledArcTanh(nn.Module):
+    def __init__(self, a=15., b=2. / 15.):
+        super().__init__()
+        self.a = a
+        self.b = b
+
+    def forward(self, sample):
+        return torch.atanh(sample /self.a) / self.b
 
 class MultiHardTanh(nn.Module):
     def __init__(self, tanh_settings):

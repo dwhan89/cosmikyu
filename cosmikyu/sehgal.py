@@ -283,12 +283,12 @@ class SehgalNetwork(object):
         LF = cnn.LinearFeature(5, 5, bias=True)
         nconv_layer_gen = 5
         nthresh_layer_gen = 0
-        self.forse_generator = model.FORSE_Generator(self.stamp_shape, nconv_layer=nconv_layer_gen, nconv_fc=nconv_fc,
-                                                     ngpu=ngpu,
-                                                     kernal_size=kernal_size, stride=stride, padding=padding,
-                                                     output_padding=output_padding, normalize=True,
-                                                     activation=[LF, STanh], nin_channel=5, nout_channel=5,
-                                                     nthresh_layer=nthresh_layer_gen, dropout_rate=dropout_rate).to(
+        self.forse_generator = model.VAEGAN_Generator(self.stamp_shape, nconv_layer=nconv_layer_gen, nconv_fc=nconv_fc,
+                                                      ngpu=ngpu,
+                                                      kernal_size=kernal_size, stride=stride, padding=padding,
+                                                      output_padding=output_padding, normalize=True,
+                                                      activation=[LF, STanh], nin_channel=5, nout_channel=5,
+                                                      nthresh_layer=nthresh_layer_gen, dropout_rate=dropout_rate).to(
             device=self.device)
         print(f"Loading {tuner_state_file}")
         self.forse_generator.load_state_dict(torch.load(tuner_state_file, map_location=self.device))

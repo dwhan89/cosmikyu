@@ -410,7 +410,7 @@ class UNET_Generator(nn.Module):
         return ret_up if "final" not in self.model_dict else self.model_dict["final"](ret_up)
 
 
-class FORSE_Generator(nn.Module):
+class VAEGAN_Generator(nn.Module):
     def __init__(self, shape, nconv_layer=2, nconv_fc=32, ngpu=1, kernal_size=5, stride=2, padding=2,
                  output_padding=1, normalize=True, activation=None, nin_channel=3, nout_channel=3,
                  nthresh_layer=1, dropout_rate=0.5):

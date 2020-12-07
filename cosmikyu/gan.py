@@ -11,7 +11,7 @@ from torchvision.utils import save_image
 
 from cosmikyu import config
 from cosmikyu.model import DCGAN_SIMPLE_Generator, DCGAN_SIMPLE_Discriminator, DCGAN_Generator, DCGAN_Discriminator, \
-    WGAN_Generator, WGAN_Discriminator, UNET_Generator, UNET_Discriminator, UNET_Discriminator_WGP, FORSE_Generator
+    WGAN_Generator, WGAN_Discriminator, UNET_Generator, UNET_Discriminator, UNET_Discriminator_WGP, VAEGAN_Generator
 
 
 class GAN(object):
@@ -593,7 +593,7 @@ class PIXGAN_WGP(PIXGAN):
                              disc_conditional=disc_conditional)
 
 
-class FORSE(PIXGAN):
+class VAEGAN(PIXGAN):
     def __init__(self, identifier, shape, output_path=None, experiment_path=None, cuda=False, ngpu=1,
                  nconv_layer_gen=2, nconv_layer_disc=2, nconv_fcgen=32, nconv_fcdis=32, kernal_size=5, stride=2,
                  padding=2, output_padding=1, gen_act=nn.Tanh(), nin_channel=3, nout_channel=3, nthresh_layer_gen=1,
@@ -607,13 +607,13 @@ class FORSE(PIXGAN):
                          nin_channel=nin_channel, nout_channel=nout_channel, nthresh_layer_gen=nthresh_layer_gen,
                          nthresh_layer_disc=nthresh_layer_disc, dropout_rate=dropout_rate)
 
-        self.generator = FORSE_Generator(shape, nconv_layer=self.nconv_layer_gen, nconv_fc=self.nconv_fcgen,
-                                         ngpu=self.ngpu,
-                                         kernal_size=kernal_size, stride=stride, padding=padding,
-                                         output_padding=output_padding, normalize=True,
-                                         activation=gen_act, nin_channel=self.nin_channel,
-                                         nout_channel=self.nout_channel,
-                                         nthresh_layer=nthresh_layer_gen, dropout_rate=dropout_rate).to(
+        self.generator = VAEGAN_Generator(shape, nconv_layer=self.nconv_layer_gen, nconv_fc=self.nconv_fcgen,
+                                          ngpu=self.ngpu,
+                                          kernal_size=kernal_size, stride=stride, padding=padding,
+                                          output_padding=output_padding, normalize=True,
+                                          activation=gen_act, nin_channel=self.nin_channel,
+                                          nout_channel=self.nout_channel,
+                                          nthresh_layer=nthresh_layer_gen, dropout_rate=dropout_rate).to(
             device=self.device)
         # Initialize weights
         self.generator.apply(self._weights_init_normal)
@@ -625,7 +625,7 @@ class FORSE(PIXGAN):
                       save_interval=save_interval, load_states=load_states, save_states=save_states, verbose=verbose,
                       mlflow_run=mlflow_run, lr=lr, betas=betas, disc_conditional=False, lambda_l1=lambda_l1)
 
-class FORSE_WGP(PIXGAN_WGP):
+class VAEGAN_WGP(PIXGAN_WGP):
     def __init__(self, identifier, shape, output_path=None, experiment_path=None, cuda=False, ngpu=1,
                  nconv_layer_gen=2, nconv_layer_disc=2, nconv_fcgen=32, nconv_fcdis=32, kernal_size=5, stride=2,
                  padding=2, output_padding=1, gen_act=nn.Tanh(), nin_channel=3, nout_channel=3, nthresh_layer_gen=1,
@@ -639,13 +639,13 @@ class FORSE_WGP(PIXGAN_WGP):
                          nin_channel=nin_channel, nout_channel=nout_channel, nthresh_layer_gen=nthresh_layer_gen,
                          nthresh_layer_disc=nthresh_layer_disc, dropout_rate=dropout_rate)
 
-        self.generator = FORSE_Generator(shape, nconv_layer=self.nconv_layer_gen, nconv_fc=self.nconv_fcgen,
-                                         ngpu=self.ngpu,
-                                         kernal_size=kernal_size, stride=stride, padding=padding,
-                                         output_padding=output_padding, normalize=True,
-                                         activation=gen_act, nin_channel=self.nin_channel,
-                                         nout_channel=self.nout_channel,
-                                         nthresh_layer=nthresh_layer_gen, dropout_rate=dropout_rate).to(
+        self.generator = VAEGAN_Generator(shape, nconv_layer=self.nconv_layer_gen, nconv_fc=self.nconv_fcgen,
+                                          ngpu=self.ngpu,
+                                          kernal_size=kernal_size, stride=stride, padding=padding,
+                                          output_padding=output_padding, normalize=True,
+                                          activation=gen_act, nin_channel=self.nin_channel,
+                                          nout_channel=self.nout_channel,
+                                          nthresh_layer=nthresh_layer_gen, dropout_rate=dropout_rate).to(
             device=self.device)
         # Initialize weights
         self.generator.apply(self._weights_init_normal)

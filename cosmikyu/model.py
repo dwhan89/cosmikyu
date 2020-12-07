@@ -243,7 +243,6 @@ class UNET_Discriminator(DCGAN_Discriminator):
     def __init__(self, shape, nconv_layer=2, nconv_fc=32, ngpu=1, kernal_size=5, stride=2, padding=2, normalize=True,
                  nthresh_layer=1):
         self.nthresh_layer = nthresh_layer
-
         super().__init__(shape=shape, nconv_layer=nconv_layer, nconv_fc=nconv_fc, ngpu=ngpu, kernal_size=kernal_size,
                          stride=stride, padding=padding, normalize=normalize)
 
@@ -252,7 +251,7 @@ class UNET_Discriminator(DCGAN_Discriminator):
         for i in range(self.nthresh_layer):
             nin_filt = self.nconv_fc * self.stride ** ((self.nconv_layer - 2) + 1) if i == 0 else 512
             layers.extend(self.discriminator_block(nin_filt, 512, stride=1, normalize=True))
-        layers.extend([nn.Conv2d(512, 1, self.kernal_size, stride=1, padding=self.padding)])
+        layers.extend([nn.Conv2d(512, 1, self.kernal_size, stride=1, padding=self.padding), nn.Sigmoid()])
         return layers
 
 

@@ -6,7 +6,7 @@ import scipy.interpolate
 import torch
 from orphics import maps as omaps
 from pixell import enmap, utils, curvedsky, powspec
-
+import pylops, cupy as cp
 from . import transforms, nn as cnn, model
 
 default_tcmb = 2.726
@@ -59,9 +59,9 @@ class Sehgal10Reprojected(object):
     def get_compts_idxes(self, trimmed=False):
         return [compt_idx if not trimmed else compt_idx.split("_")[0] for compt_idx in self.compts]
 
-    def get_fits_path(self, dirpath, rot_angle1, rot_angle2, compt_idx):
+    def get_fits_path(self, dirpath, rot_angle1, rot_angle2, compt_idx, fits_type="alm"):
         freq_idx = "" if compt_idx == "kappa" else "148_"
-        file_name = "%s%s_%s_%s_%s_000.fits" % (freq_idx, compt_idx, "alm", "%0.3d" % rot_angle1, "%0.3d" % rot_angle2)
+        file_name = "%s%s_%s_%s_%s_000.fits" % (freq_idx, compt_idx, fits_type , "%0.3d" % rot_angle1, "%0.3d" % rot_angle2)
         return os.path.join(dirpath, file_name)
 
     def get_highflux_cat_path(self, compt_idx):
@@ -219,10 +219,75 @@ class Sehgal10Reprojected(object):
         ret[:, 1] = pos[:, 1] - np.pi
         return ret
 
+class Sehgal10ReprojectedFromCat(Sehgal10Reprojected):
+    def __init__(self, input_dir, shape, wcs):
+        super().__init__(input_dir, shape, wcs)
+
+    def get_maps(self, rot_angle1, rot_angle2, compts=None, use_sht=True, ret_alm=True, transfer=None, load_processed=False, save_processed=False, flux_cut=None):
+        if compts is None: compts = self.compts
+        shape, wcs = self.geometry
+        nshape = (len(compts),) + shape[-2:]
+        ret = enmap.zeros(nshape, wcs)
+
+        if load_processed and not ret_alm: 
+            for i, compt_idx in enumerate(compts):
+                input_file = self.get_fits_path(self.processed_dir, rot_angle1, rot_angle2, compt_idx)
+                print("loading", input_file)
+                temp = enmap.read_map(input_file)
+                ret[i,...] = enmap.extract(temp, shape, wcs).copy()
+                del temp
+            return ret
+        else:
+            for i, compt_idx in enumerate(compts):
+                if "pts" not in compt_idx:
+                    input_file = self.get_fits_path(self.input_dir, rot_angle1, rot_angle2, compt_idx)
+                    print("loading", input_file)
+
+                    alm = np.complex128(hp.read_alm(input_file, hdu=(1)))
+                    ret[i, ...] = curvedsky.alm2map(alm, enmap.zeros(nshape[1:], wcs))
+                else:
+                    input_file = self.get_fits_path(self.input_dir, rot_angle1, rot_angle2, compt_idx, fits_type="enmap")
+                    print("loading", input_file)
+                    temp = enmap.read_map(input_file)
+                    ret[i,...] = enmap.extract(temp, shape, wcs).copy()
+                    del temp
+        alms = None
+        if transfer is not None:
+            l, f = transfer
+            interp_func = scipy.interpolate.interp1d(l, f, bounds_error=False, fill_value=0.)
+            if use_sht:
+                l_intp = np.arange(self.lmax + 1)
+                f_int = interp_func(l_intp)
+                alms = curvedsky.map2alm(ret, lmax=self.lmax, spin=0)
+                for i in range(len(compts)):
+                    alms[i] = hp.almxfl(alms[i], f_int)
+                ret = curvedsky.alm2map(alms, ret, spin=0)
+            else:
+                ftmap = enmap.fft(ret)
+                f_int = interp_func(enmap.modlmap(shape, wcs).ravel())
+                ftmap = ftmap * np.reshape(f_int, (shape[-2:]))
+                ret = enmap.ifft(ftmap).real;
+                del ftmap
+
+        if save_processed:
+            raise NotImplemented()
+
+        if flux_cut is not None:
+            flux_map = flux_cut/enmap.pixsizemap(shape, wcs)
+            flux_map *= 1e-3*jysr2thermo(148)
+            for i, compt_idx in enumerate(compts):
+                if "pts" not in compt_idx: continue
+                loc = np.where(ret[i]>flux_map)
+                ret[i][loc]=0.
+            del flux_map
+        
+        if ret_alm and alms is None:
+            alms = curvedsky.map2alm(ret, lmax=self.lmax, spin=0)
+        return ret if not ret_alm else (ret, alms)
 
 class SehgalNetwork(object):
     def __init__(self, shape, wcs, cuda, ngpu, nbatch, norm_info_file, pixgan_state_file, tuner_state_file,
-                 clkk_spec_file, transfer_file, taper_width, cache_dir=None):
+                 clkk_spec_file, transfer_file, radio_profile_file, cib_profile_file, taper_width, cache_dir=None):
         self.shape = shape[-2:]
         self.wcs = wcs
         self.template = enmap.zeros(shape, wcs)
@@ -244,6 +309,21 @@ class SehgalNetwork(object):
         self.norm_info_file = norm_info_file 
         self.normalizer = transforms.SehgalDataNormalizerScaledLogZShrink(self.norm_info_file, channel_idxes=["kappa"])
         self.unnormalizer = transforms.SehgalDataUnnormalizerScaledLogZShrink(self.norm_info_file)
+        self.radio_profile_file = radio_profile_file
+        if self.radio_profile_file:
+            radio_profile = np.load(self.radio_profile_file).astype(np.float32)
+            radio_profile /= np.sum(radio_profile)
+        else:
+            radio_profile = None
+
+        self.cib_profile_file = cib_profile_file
+        if self.cib_profile_file:
+            cib_profile = np.load(self.cib_profile_file).astype(np.float32)
+            cib_profile /= np.sum(cib_profile)
+        else:
+            cib_profile = None
+        self.pt_src_profiles = {3: cib_profile, 4: radio_profile}
+        
 
         ## network specific infos
         STanh = cnn.ScaledTanh(30., 2. / 30.)
@@ -262,8 +342,9 @@ class SehgalNetwork(object):
         #self.clkk_spec = (L,clkk)
         self.clkk_spec = np.load(clkk_spec_file)
 
-        ## transfer 
-        self.transfer_func = np.load(transfer_file)
+        ## transfer
+        if transfer_file:
+            self.transfer_func = np.load(transfer_file)
         #self.transfer_func[:2,1:] = 1.
         ## pixgan layer
         LF = cnn.LinearFeature(4, 4)
@@ -311,7 +392,7 @@ class SehgalNetwork(object):
         if conv_beam: alm = hp.almxfl(alm, self._get_beam()[1])
         return curvedsky.alm2map(alm, self.template.copy())[np.newaxis, ...]
 
-    def generate_samples(self, seed=None, ret_corr=False, wrap=True, wrap_mode=("reflect","wrap"), edge_blend=True, verbose=True, input_kappa=None, transfer=True, deconv_beam=True, use_sht=True, post_processes=[], use_cache=True, flux_cut=None):
+    def generate_samples(self, seed=None, ret_corr=False, wrap=True, wrap_mode=("reflect","wrap"), edge_blend=True, verbose=True, input_kappa=None, transfer=True, deconv_beam=True, use_sht=True, post_processes=[], use_cache=True, flux_cut=10, niter_fista=100):
         if input_kappa is None:
             if verbose: print("making input gaussian kappa")
             gkmap = self.normalizer(self._generate_input_kappa(seed=seed))
@@ -436,6 +517,8 @@ class SehgalNetwork(object):
         f_transfs = [None]*5
         for i in range(5):
             f_transfs[i] = f_transf.copy()
+        #f_transfs[3] = f_taper.copy()
+        #f_transfs[4] = f_taper.copy()
 
         if transfer:
             if verbose: print("applying trasfer function")
@@ -468,6 +551,15 @@ class SehgalNetwork(object):
                 interp_funcs[i] =  scipy.interpolate.interp1d(l, f_transfs[i], bounds_error=False, fill_value=(f_transfs[i][0],f_transfs[i][-1]))
             return interp_funcs
 
+        torch.cuda.empty_cache() 
+        '''
+        loc = np.where(output_imgs[4] < 0)
+        output_imgs[4][loc] = 0
+        del loc
+        '''
+
+        
+        
         if deconv_beam or transfer:
             taper = omaps.cosine_window(Ny, Nx, 20, 20)
             minval = np.min(taper[taper!= 0])
@@ -477,25 +569,56 @@ class SehgalNetwork(object):
                 l_intp = np.arange(self.lmax + 1)
                 f_int = interp_func(l_intp)
                 alms = curvedsky.map2alm(output_imgs, lmax=self.lmax, spin=0)
-                for i in range(len(compts)):
+                for i in range(4):
                     alms[i] = hp.almxfl(alms[i], f_int)
                 output_imgs = curvedsky.alm2map(alms, ret, spin=0)
                 del alms
             else:
-                ftmap = enmap.fft(output_imgs)
+                maxidx = 5
+                ftmap = enmap.fft(output_imgs[:maxidx,...])
                 modlmap = enmap.modlmap((Ny, Nx) , wcs).ravel()
                 combined_tfs = _load_combined_tf_funcs(modlmap, use_cache, self.cache_dir)
-                for i in range(5):
+                for i in range(maxidx):
                     ftmap[i] = ftmap[i] * np.reshape(combined_tfs[:, i+1], (Ny, Nx))
                 del modlmap
-                output_imgs = enmap.ifft(ftmap).real;
+                output_imgs[:maxidx,...] = enmap.ifft(ftmap).real;
                 del ftmap
-            #output_imgs = output_imgs/taper
         
+        #if transfer:
+        #    output_imgs[4,:,:] *=1.1
+        ''' 
+        if deconv_beam:
+            ## we are going to handle radio source seperately
+            print("point source iteratively beam deconv")
+            for i in [4]:
+                target = output_imgs[i,:,:].astype(np.float32).copy()
+                kernal = cp.array(self.pt_src_profiles[i])
+                w = self.pt_src_profiles[i].shape[0]//2
+                scale_fact = 100
+                target = cp.array(target.flatten()/scale_fact)
+                Cop = pylops.signalprocessing.Convolve2D(np.product(self.shape), h=kernal,
+                                                         offset=(w,w),
+                                                         dims=self.shape, dtype='float32')
+                target_deconv = \
+                    pylops.optimization.sparsity.FISTA(Cop, target, eps=1e-1,
+                                                       niter=niter_fista, show=verbose)[0]
+                target = cp.asnumpy(target_deconv)
+                output_imgs[i,:,:] = target.reshape(self.shape).astype(np.float64).copy()
+                loc = np.where(output_imgs[i,:,:] < 0)
+                output_imgs[i,:,:][loc] = 0. 
+                output_imgs[i,...] *= scale_fact
+                del kernal, Cop, target_deconv, target
+                mempool = cp.get_default_memory_pool()
+                pinned_mempool = cp.get_default_pinned_memory_pool()
+                mempool.free_all_blocks()
+                pinned_mempool.free_all_blocks()
+        '''
         if flux_cut is not None:
-            flux_cut = flux_cut*1e-3/(0.5*utils.arcmin)**2*jysr2thermo(148)
+            flux_map = flux_cut/enmap.pixsizemap(self.shape, self.wcs)
+            flux_map *= 1e-3*jysr2thermo(148)
             for i in range(3,5):
-                loc = np.where(output_imgs[i]>flux_cut)
+                loc = np.where(output_imgs[i]>flux_map)
                 output_imgs[i][loc]=0.
+            del flux_cut
 
         return output_imgs  if not ret_corr else (output_imgs, corr)

@@ -287,7 +287,7 @@ class Sehgal10ReprojectedFromCat(Sehgal10Reprojected):
 
 class SehgalNetwork(object):
     def __init__(self, shape, wcs, cuda, ngpu, nbatch, norm_info_file, pixgan_state_file, tuner_state_file,
-                 clkk_spec_file, transfer_file, radio_profile_file, cib_profile_file, taper_width, cache_dir=None):
+                 clkk_spec_file, transfer_file, taper_width, cache_dir=None):
         self.shape = shape[-2:]
         self.wcs = wcs
         self.template = enmap.zeros(shape, wcs)
@@ -309,24 +309,9 @@ class SehgalNetwork(object):
         self.norm_info_file = norm_info_file 
         self.normalizer = transforms.SehgalDataNormalizerScaledLogZShrink(self.norm_info_file, channel_idxes=["kappa"])
         self.unnormalizer = transforms.SehgalDataUnnormalizerScaledLogZShrink(self.norm_info_file)
-        self.radio_profile_file = radio_profile_file
-        if self.radio_profile_file:
-            radio_profile = np.load(self.radio_profile_file).astype(np.float32)
-            radio_profile /= np.sum(radio_profile)
-        else:
-            radio_profile = None
-
-        self.cib_profile_file = cib_profile_file
-        if self.cib_profile_file:
-            cib_profile = np.load(self.cib_profile_file).astype(np.float32)
-            cib_profile /= np.sum(cib_profile)
-        else:
-            cib_profile = None
-        self.pt_src_profiles = {3: cib_profile, 4: radio_profile}
-        
 
         ## network specific infos
-        STanh = cnn.ScaledTanh(30., 2. / 30.)
+        STanh = cnn.ScaledTanh(15., 2./15.)
         nconv_fc = 64
         kernal_size = 4
         stride = 2
@@ -384,7 +369,7 @@ class SehgalNetwork(object):
         f_ell = np.exp(-(ell) ** 2. * sigma ** 2. / 2)
         return ell, f_ell
 
-    def _generate_input_kappa(self, seed=None, conv_beam=True):
+    def _generate_input_kappa(self, seed=None, conv_beam=False):
         np.random.seed(seed)
         clkk = self.clkk_spec[:,1]
         #clkk = self.clkk_spec[1]
@@ -392,7 +377,7 @@ class SehgalNetwork(object):
         if conv_beam: alm = hp.almxfl(alm, self._get_beam()[1])
         return curvedsky.alm2map(alm, self.template.copy())[np.newaxis, ...]
 
-    def generate_samples(self, seed=None, ret_corr=False, wrap=True, wrap_mode=("reflect","wrap"), edge_blend=True, verbose=True, input_kappa=None, transfer=True, deconv_beam=True, use_sht=True, post_processes=[], use_cache=True, flux_cut=10, niter_fista=100):
+    def generate_samples(self, seed=None, ret_corr=False, wrap=True, wrap_mode=("reflect","wrap"), edge_blend=True, verbose=True, input_kappa=None, transfer=True, deconv_beam=False, use_sht=True, post_processes=[], use_cache=True, flux_cut=10):
         if input_kappa is None:
             if verbose: print("making input gaussian kappa")
             gkmap = self.normalizer(self._generate_input_kappa(seed=seed))
@@ -490,18 +475,11 @@ class SehgalNetwork(object):
         alms = None
 
         
-        def fft_taper(lcrit, taper_width=200):
-            ell = np.arange(lcrit+taper_width+1)
-            f = np.ones(len(ell))
-            f[lcrit:lcrit+taper_width+1] = np.cos(np.linspace(0,np.pi/2,taper_width+1))
-            f[-1] = 0
-            return ell, f
-
 
         def fft_taper(lcrit, taper_width=10000, order=5):
             ell = np.arange(lcrit+taper_width+1)
             f = np.ones(len(ell))
-            f[lcrit:lcrit+taper_width+1] = np.cos(np.linspace(0,np.pi/2,taper_width+1))**5
+            f[lcrit:lcrit+taper_width+1] = np.cos(np.linspace(0,np.pi/2,taper_width+1))**order
             f[-1] = 0
             return ell, f
         
@@ -517,8 +495,6 @@ class SehgalNetwork(object):
         f_transfs = [None]*5
         for i in range(5):
             f_transfs[i] = f_transf.copy()
-        #f_transfs[3] = f_taper.copy()
-        #f_transfs[4] = f_taper.copy()
 
         if transfer:
             if verbose: print("applying trasfer function")
@@ -552,11 +528,6 @@ class SehgalNetwork(object):
             return interp_funcs
 
         torch.cuda.empty_cache() 
-        '''
-        loc = np.where(output_imgs[4] < 0)
-        output_imgs[4][loc] = 0
-        del loc
-        '''
 
         
         
@@ -574,7 +545,7 @@ class SehgalNetwork(object):
                 output_imgs = curvedsky.alm2map(alms, ret, spin=0)
                 del alms
             else:
-                maxidx = 5
+                maxidx = 3
                 ftmap = enmap.fft(output_imgs[:maxidx,...])
                 modlmap = enmap.modlmap((Ny, Nx) , wcs).ravel()
                 combined_tfs = _load_combined_tf_funcs(modlmap, use_cache, self.cache_dir)
@@ -583,36 +554,25 @@ class SehgalNetwork(object):
                 del modlmap
                 output_imgs[:maxidx,...] = enmap.ifft(ftmap).real;
                 del ftmap
-        
-        #if transfer:
-        #    output_imgs[4,:,:] *=1.1
-        ''' 
-        if deconv_beam:
-            ## we are going to handle radio source seperately
-            print("point source iteratively beam deconv")
-            for i in [4]:
-                target = output_imgs[i,:,:].astype(np.float32).copy()
-                kernal = cp.array(self.pt_src_profiles[i])
-                w = self.pt_src_profiles[i].shape[0]//2
-                scale_fact = 100
-                target = cp.array(target.flatten()/scale_fact)
-                Cop = pylops.signalprocessing.Convolve2D(np.product(self.shape), h=kernal,
-                                                         offset=(w,w),
-                                                         dims=self.shape, dtype='float32')
-                target_deconv = \
-                    pylops.optimization.sparsity.FISTA(Cop, target, eps=1e-1,
-                                                       niter=niter_fista, show=verbose)[0]
-                target = cp.asnumpy(target_deconv)
-                output_imgs[i,:,:] = target.reshape(self.shape).astype(np.float64).copy()
-                loc = np.where(output_imgs[i,:,:] < 0)
-                output_imgs[i,:,:][loc] = 0. 
-                output_imgs[i,...] *= scale_fact
-                del kernal, Cop, target_deconv, target
-                mempool = cp.get_default_memory_pool()
-                pinned_mempool = cp.get_default_pinned_memory_pool()
-                mempool.free_all_blocks()
-                pinned_mempool.free_all_blocks()
-        '''
+        if transfer:
+            conv = enmap.pixsizemap(self.shape, self.wcs)/jysr2thermo(148)*1e3
+
+            output_imgs[3] *= 1.1
+
+            target = output_imgs[3]*conv
+            lowflux = target.copy()
+            cut = 1
+            loc = np.where(lowflux>cut)
+            lowflux[loc] = 0.
+            highflux = target-lowflux
+            highflux = highflux**0.61
+            #loc = np.where(highflux<cut)
+            #highflux[loc] = 0
+            target = lowflux+highflux
+            output_imgs[3] = target/conv
+            del lowflux, highflux
+            output_imgs[4] *= 1.6284
+
         if flux_cut is not None:
             flux_map = flux_cut/enmap.pixsizemap(self.shape, self.wcs)
             flux_map *= 1e-3*jysr2thermo(148)
@@ -620,5 +580,9 @@ class SehgalNetwork(object):
                 loc = np.where(output_imgs[i]>flux_map)
                 output_imgs[i][loc]=0.
             del flux_cut
+     
+        for i in range(3,5):
+            loc = np.where(output_imgs[i]<0)
+            output_imgs[i][loc]=0.
 
         return output_imgs  if not ret_corr else (output_imgs, corr)

@@ -554,8 +554,10 @@ class PIXGAN_WGP(PIXGAN):
     def _eval_generator_loss(self, real_imgs, gen_imgs, **kwargs):
         loss = -torch.mean(self.discriminator(gen_imgs))
         if kwargs['lambda_l1'] != 0 :
-            real_ps = torch.mean(torch.mean(real_imgs**2, dim=-1), dim=-1)
-            gen_ps = torch.mean(torch.mean(gen_imgs**2, dim=-1), dim=-1)
+            real_ps = torch.var(real_imgs, dim=[-1,-2])
+            gen_ps = torch.var(gen_imgs, dim=[-1,-2])
+            #real_ps = torch.mean(torch.mean(real_imgs**2, dim=-1), dim=-1)
+            #gen_ps = torch.mean(torch.mean(gen_imgs**2, dim=-1), dim=-1)
             loss = loss + kwargs["lambda_l1"]*self.l1_loss(real_ps, gen_ps)
 
         return loss
@@ -679,8 +681,10 @@ class DCGAN_WGP(DCGAN):
     def _eval_generator_loss(self, real_imgs, gen_imgs, **kwargs):
         loss = -torch.mean(self.discriminator(gen_imgs))
         if kwargs['lambda_l1'] != 0 :
-            real_ps = torch.mean(torch.mean(real_imgs**2, dim=-1), dim=-1)
-            gen_ps = torch.mean(torch.mean(gen_imgs**2, dim=-1), dim=-1)
+            #real_ps = torch.mean(torch.mean(real_imgs**2, dim=-1), dim=-1)
+            #gen_ps = torch.mean(torch.mean(gen_imgs**2, dim=-1), dim=-1) 
+            real_ps = torch.var(real_imgs, dim=[-1,-2])
+            gen_ps = torch.var(gen_imgs, dim=[-1,-2])
             loss = loss + kwargs["lambda_l1"]*self.l1_loss(real_ps, gen_ps)
 
         return loss

@@ -320,18 +320,11 @@ class SehgalNetwork(object):
         dropout_rate = 0
 
         ## prepare input clkk
-        #ps_scalar = powspec.read_camb_scalar(clkk_spec_file)
-        #clpp = ps_scalar[1][0][0][:self.lmax + 1]
-        #L = np.arange(self.lmax + 1)
-        #clkk = clpp * (L * (L + 1)) ** 2 / 4
-        #self.clkk_spec = (L,clkk)
         self.clkk_spec = np.load(clkk_spec_file)
 
         ## transfer
         if transfer_file:
             self.transfer_func = np.load(transfer_file)
-        #self.transfer_func[:2,1:] = 1.
-        ## pixgan layer
         LF = cnn.LinearFeature(4, 4)
         nconv_layer_gen = 4
         nthresh_layer_gen = 3
@@ -377,16 +370,18 @@ class SehgalNetwork(object):
         if conv_beam: alm = hp.almxfl(alm, self._get_beam()[1])
         return curvedsky.alm2map(alm, self.template.copy())[np.newaxis, ...]
 
-    def generate_samples(self, seed=None, ret_corr=False, wrap=True, wrap_mode=("reflect","wrap"), edge_blend=True, verbose=True, input_kappa=None, transfer=True, deconv_beam=False, use_sht=True, post_processes=[], use_cache=True, flux_cut=10):
+    def generate_samples(self, seed=None, ret_corr=False, wrap=True, verbose=True, input_kappa=None, transfer=True, post_processes=[], use_cache=True, flux_cut=10):
         if input_kappa is None:
             if verbose: print("making input gaussian kappa")
-            gkmap = self.normalizer(self._generate_input_kappa(seed=seed))
+            
+            gkmap = self._generate_input_kappa(seed=seed)
         else:
             if input_kappa.ndim == 2: input_kappa = input_kappa[np.newaxis,...]
-            gkmap = self.normalizer(input_kappa.copy())
+            gkmap = input_kappa
         if use_cache: 
             os.makedirs(self.cache_dir, exist_ok=True)
 
+        gkmap = self.normalizer(self._generate_input_kappa(seed=seed))
         nch, Ny, Nx = gkmap.shape
         wcs = gkmap.wcs
         ny, nx = self.stamp_shape[-2:]
@@ -472,6 +467,350 @@ class SehgalNetwork(object):
         if ret_corr: corr = enmap.enmap(self.unnormalizer(corr), wcs)
         for post_process in post_processes:
             output_imgs = post_process(output_imgs)
+        alms = None
+
+        
+
+        def fft_taper(lcrit, taper_width=10000, order=5):
+            ell = np.arange(lcrit+taper_width+1)
+            f = np.ones(len(ell))
+            f[lcrit:lcrit+taper_width+1] = np.cos(np.linspace(0,np.pi/2,taper_width+1))**order
+            f[-1] = 0
+            return ell, f
+        
+        fft_taper_width = 20000#int(modlmap.max())-self.lmax
+        l, f_taper = fft_taper(self.lmax, taper_width=fft_taper_width, order=10)
+        f_transf = f_taper 
+        if deconv_beam: 
+            if verbose: print("deconvolving beam")
+            l, f_beam = self._get_beam(ell=l)
+            f_beam[-1*fft_taper_width:] = f_beam[-1*fft_taper_width-1]
+            f_beam = 1/f_beam
+            f_transf = f_transf*f_beam
+        f_transfs = [None]*5
+        for i in range(5):
+            f_transfs[i] = f_transf.copy()
+
+        if transfer:
+            if verbose: print("applying trasfer function")
+            for i in range(5):
+                f_transfs[i][:self.lmax+1] = f_transfs[i][:self.lmax+1]*self.transfer_func[:self.lmax+1,i+1]
+
+        def _load_combined_tf_funcs(ell, use_cache, cache_dir):
+            lmax = int(np.ceil(np.max(ell)))
+            target_file = os.path.join(cache_dir, f"tf_beam_{str(deconv_beam)}_transfer_{str(transfer)}_lmax_{lmax}_sht_{str(use_sht)}.npy")
+            if os.path.exists(target_file) and use_cache:
+                storage = np.load(target_file)
+                print(f"loading {target_file}")
+            else:
+                interp_funcs = _gen_interp_funcs()
+                storage = np.zeros((len(ell), 6))
+                storage[:,0] = ell.copy()
+                for i in range(5):
+                    storage[:,i+1] = interp_funcs[i](ell)
+                if use_cache:
+                    np.save(target_file, storage)
+                    print(f"saving {target_file}")
+            return storage
+            
+
+
+
+        def _gen_interp_funcs():
+            interp_funcs = [None]*5
+            for i in range(5):
+                interp_funcs[i] =  scipy.interpolate.interp1d(l, f_transfs[i], bounds_error=False, fill_value=(f_transfs[i][0],f_transfs[i][-1]))
+            return interp_funcs
+
+        torch.cuda.empty_cache() 
+
+        
+        
+        if deconv_beam or transfer:
+            taper = omaps.cosine_window(Ny, Nx, 20, 20)
+            minval = np.min(taper[taper!= 0])
+            taper[taper==0] = minval
+            if use_sht:
+                raise NotImplemented()
+                l_intp = np.arange(self.lmax + 1)
+                f_int = interp_func(l_intp)
+                alms = curvedsky.map2alm(output_imgs, lmax=self.lmax, spin=0)
+                for i in range(4):
+                    alms[i] = hp.almxfl(alms[i], f_int)
+                output_imgs = curvedsky.alm2map(alms, ret, spin=0)
+                del alms
+            else:
+                maxidx = 3
+                ftmap = enmap.fft(output_imgs[:maxidx,...])
+                modlmap = enmap.modlmap((Ny, Nx) , wcs).ravel()
+                combined_tfs = _load_combined_tf_funcs(modlmap, use_cache, self.cache_dir)
+                for i in range(maxidx):
+                    ftmap[i] = ftmap[i] * np.reshape(combined_tfs[:, i+1], (Ny, Nx))
+                del modlmap
+                output_imgs[:maxidx,...] = enmap.ifft(ftmap).real;
+                del ftmap
+        if transfer:
+            conv = enmap.pixsizemap(self.shape, self.wcs)/jysr2thermo(148)*1e3
+
+            output_imgs[3] *= 1.1
+
+            target = output_imgs[3]*conv
+            lowflux = target.copy()
+            cut = 1
+            loc = np.where(lowflux>cut)
+            lowflux[loc] = 0.
+            highflux = target-lowflux
+            highflux = highflux**0.61
+            #loc = np.where(highflux<cut)
+            #highflux[loc] = 0
+            target = lowflux+highflux
+            output_imgs[3] = target/conv
+            del lowflux, highflux
+            output_imgs[4] *= 1.6284
+
+        if flux_cut is not None:
+            flux_map = flux_cut/enmap.pixsizemap(self.shape, self.wcs)
+            flux_map *= 1e-3*jysr2thermo(148)
+            for i in range(3,5):
+                loc = np.where(output_imgs[i]>flux_map)
+                output_imgs[i][loc]=0.
+            del flux_cut
+     
+        for i in range(3,5):
+            loc = np.where(output_imgs[i]<0)
+            output_imgs[i][loc]=0.
+
+        return output_imgs  if not ret_corr else (output_imgs, corr)
+
+
+
+class SehgalNetworkFullSky(object):
+    def __init__(self,  cuda, ngpu, nbatch, norm_info_file, pixgan_state_file, tuner_state_file,
+                 clkk_spec_file, transfer_file, taper_width, xgrid_file=None, xgrid_inv_file=None, cache_dir=None):
+        ## fixed full sky geometry
+        self.shape = (21600, 43200) 
+        _ , self.wcs = enmap.fullsky_geometry(res=0.5*utils.arcmin)
+        self.template = enmap.zeros(self.shape, self.wcs)
+        self.stamp_shape = (5, 128, 128)
+        self.nbatch = nbatch 
+        self.taper_width = taper_width
+
+        Ny, Nx = self.shape
+        ny,nx = self.stamp_shape[-2:]
+        num_ybatch = int(np.ceil((Ny-self.taper_width)/(ny-self.taper_width)))
+        num_xbatch = int(np.ceil((Nx-self.taper_width)/(nx-self.taper_width)))
+        #self.num_batch = num_xbatch*num_ybatch 
+        self.num_batch = (num_ybatch, num_xbatch)
+
+        Ny_pad, Nx_pad = num_ybatch*ny, num_xbatch*nx
+        self.shape_padded = (Ny_pad, Nx_pad)
+
+        self.lmax = 10000
+        self.cache_dir = cache_dir
+        if self.cache_dir is None:
+            self.cache_dir = os.path.join(os.getcwd(), "cache")
+
+        self.cuda = cuda
+        self.ngpu = 0 if not self.cuda else ngpu
+        if torch.cuda.is_available() and not cuda:
+            print("[WARNING] You have a CUDA device. You probably want to run with CUDA enabled")
+        self.Tensor = torch.cuda.FloatTensor if cuda else torch.FloatTensor
+        self.device = torch.device("cuda" if cuda else "cpu")
+
+        self.norm_info_file = norm_info_file 
+        self.normalizer = transforms.SehgalDataNormalizerScaledLogZShrink(self.norm_info_file, channel_idxes=["kappa"])
+        self.unnormalizer = transforms.SehgalDataUnnormalizerScaledLogZShrink(self.norm_info_file)
+
+        ## network specific infos
+        STanh = cnn.ScaledTanh(15., 2./15.)
+        nconv_fc = 64
+        kernal_size = 4
+        stride = 2
+        padding = 1
+        output_padding = 0
+        dropout_rate = 0
+
+        ## prepare input clkk
+        self.clkk_spec = np.load(clkk_spec_file)
+
+        ## transfer
+        if transfer_file:
+            self.transfer_func = np.load(transfer_file)
+        LF = cnn.LinearFeature(4, 4)
+        nconv_layer_gen = 4
+        nthresh_layer_gen = 3
+        self.pixgan_generator = model.UNET_Generator(self.stamp_shape, nconv_layer=nconv_layer_gen, nconv_fc=nconv_fc,
+                                                     ngpu=ngpu,
+                                                     kernal_size=kernal_size, stride=stride, padding=padding,
+                                                     output_padding=output_padding, normalize=True,
+                                                     activation=[LF, STanh], nin_channel=1, nout_channel=4,
+                                                     nthresh_layer=nthresh_layer_gen, dropout_rate=dropout_rate).to(
+            device=self.device)
+        print(f"Loading {pixgan_state_file}")
+        self.pixgan_generator.load_state_dict(torch.load(pixgan_state_file, map_location=self.device))
+
+        ## tuner layer
+        LF = cnn.LinearFeature(5, 5, bias=True)
+        nconv_layer_gen = 5
+        nthresh_layer_gen = 0
+        self.forse_generator = model.VAEGAN_Generator(self.stamp_shape, nconv_layer=nconv_layer_gen, nconv_fc=nconv_fc,
+                                                      ngpu=ngpu,
+                                                      kernal_size=kernal_size, stride=stride, padding=padding,
+                                                      output_padding=output_padding, normalize=True,
+                                                      activation=[LF, STanh], nin_channel=5, nout_channel=5,
+                                                      nthresh_layer=nthresh_layer_gen, dropout_rate=dropout_rate).to(
+            device=self.device)
+        print(f"Loading {tuner_state_file}")
+        self.forse_generator.load_state_dict(torch.load(tuner_state_file, map_location=self.device))
+
+        self.pixgan_generator.eval()
+        self.forse_generator.eval()
+
+        ## load the xgrid later
+        self.xgrid_file = xgrid_file
+        self.xgrid_inv_file = xgrid_inv_file
+        self.xgrid = None
+        self.xgrid_inv = None
+
+    def _get_xgrid(self):
+        if self.xgrid is None:
+            if self.xgrid_file is not None:
+                self.xgrid = np.load(self.xgrid_file)
+            else:
+                self._generate_grid_info()
+        return self.xgrid
+    
+    def _get_xgrid_inv(self):
+        if self.xgrid_inv is None:
+            if self.xgrid_inv_file is not None:
+                self.xgrid_inv = np.load(self.xgrid_inv_file)
+            else:
+                self._generate_xgrid_info()
+        return self.xgrid_inv
+   
+    def _generate_xgrid_info(self):
+        shape = self.shape[-2:]
+        wcs = self.wcs 
+        xgrid = np.zeros(self.shape_padded) 
+        pixshapemap = enmap.pixshapemap(shape, wcs)
+        dxs = pixshapemap[1,:,0]/utils.arcmin
+        xscales = 0.5/dxs
+        #loc = np.where(xscales<=1.05)
+        num_ybatch = self.num_batch[0]
+        num_xbatch = self.num_batch[1]
+        taper_width = self.taper_width
+        stamp_shape = self.stamp_shape[-2:]
+        xwidths = (np.nan_to_num(xscales)*stamp_shape[1])/2
+        print("generating x grid")
+        for yidx in range(num_ybatch):
+            if yidx % 10 == 0:
+                print(f"{(yidx)/num_ybatch*100:.2f} perc completed")
+            ysidx = yidx*(stamp_shape[0]-taper_width)
+            yeidx = ysidx+stamp_shape[0]
+            yoffset = yidx*taper_width
+
+            for ycidx in range(ysidx, yeidx):
+                yocidx = ycidx+yoffset
+                for xidx in range(num_xbatch):
+                    xsidx = xidx*(stamp_shape[1]-taper_width)
+                    xmidx = xsidx+stamp_shape[1]//2
+                    xsidx = int(xmidx - xwidths[ycidx%shape[0]])
+                    xeidx = int(xmidx + xwidths[ycidx%shape[0]])
+                    xgrid_vald = np.linspace(xsidx, xeidx, stamp_shape[1]) % shape[1]
+
+                    xosidx = xidx*(stamp_shape[1])
+                    xoeidx = xosidx+stamp_shape[1]
+                    xgrid[yocidx,xosidx:xoeidx] = xgrid_vald
+            
+        xgrid_inv = xgrid.copy()
+        for i in range(xgrid.shape[0]):
+            xgrid_inv[i,:]  = np.argsort(xgrid[i,:])
+
+        self.xgrid = xgrid.astype(np.float32)
+        self.xgrid_inv = xgrid_inv.astype(np.uint16)
+
+    def _generate_input_kappa(self, seed=None, conv_beam=False):
+        np.random.seed(seed)
+        clkk = self.clkk_spec[:,1]
+        alm = curvedsky.rand_alm(clkk)
+        return curvedsky.alm2map(alm, self.template.copy())[np.newaxis, ...]
+
+    def generate_samples(self, seed=None, verbose=True, input_kappa=None, transfer=True,  post_processes=[], use_cache=True, flux_cut=10, polfix=True):
+        if input_kappa is None:
+            if verbose: print("making input gaussian kappa")
+            gkmap = self._generate_input_kappa(seed=seed)
+        else:
+            if input_kappa.ndim == 2: input_kappa = input_kappa[np.newaxis,...]
+            gkmap = input_kappa
+        if use_cache: 
+            os.makedirs(self.cache_dir, exist_ok=True)
+
+        nch, Ny, Nx = gkmap.shape
+        Ny_pad, Nx_pad = self.shape_padded
+        wcs = gkmap.wcs
+        ny, nx = self.stamp_shape[-2:]
+        taper_width = self.taper_width
+        nbatchy, nbatchx = self.num_batch 
+        xgrid = self._get_xgrid()
+        sampled = np.zeros((nch,)+self.shape_padded)
+        xin = np.arange(Nx)
+        for yidx in range(nbatchy):
+            if verbose and yidx % 10 == 0:
+                print(f"sampling {(yidx)/nbatchy*100:.1f} perc completed")
+            ysidx = yidx*(ny-taper_width)
+            yeidx = ysidx+ny
+            yoffset = taper_width*yidx
+        
+            for ycidx in range(ysidx, yeidx):
+                yocidx = ycidx+yoffset
+                if (ycidx)//Ny:
+                    ycidx = Ny-(ycidx%Ny+1)
+                cs = scipy.interpolate.CubicSpline(xin, gkmap[0, ycidx,:])
+                sampled[0,yocidx,:] = cs(xgrid[yocidx,:])
+        del xin, cs
+        if polfix:
+            if verbose: print("pol fix")
+            sampled[:,:ny,:] = np.flip(sampled[:,ny:2*ny,:],1)
+            sampled[:,-ny:,:] = np.flip(sampled[:,-2*ny:-ny:],1)
+
+        #return sampled 
+        del gkmap; gkmap = sampled
+        gkmap = self.normalizer(gkmap)
+
+        def process_ml(input_imgs, batch_maker):
+            input_imgs = batch_maker(input_imgs)
+            nsample = input_imgs.shape[0]
+            output_imgs = np.zeros((nsample, 5, ny, nx))
+            ctr = 0
+            nitr = int(np.ceil(input_imgs.shape[0]/ self.nbatch))
+            for batch in np.array_split(np.arange(input_imgs.shape[0]), nitr):
+                input_tensor = torch.autograd.Variable(self.Tensor(input_imgs[batch].copy()))
+                ret = self.pixgan_generator(input_tensor).detach()
+                ret = torch.cat((input_tensor, ret), 1)
+                ret = self.forse_generator(ret).detach()
+                output_imgs[batch] = ret.data.to(device="cpu").numpy() 
+                if verbose and ctr%20 == 0: 
+                    print(f"batch {ctr}/{nitr} completed")
+                ctr += 1
+            return output_imgs
+
+        def post_process(output_imgs,  unbatch_maker):
+            output_imgs = unbatch_maker(output_imgs)
+            output_imgs = output_imgs[0,...]
+            return output_imgs
+
+        if verbose: print("make the primary images")
+        batch_maker = transforms.Batch((nch, ny, nx)) 
+        unbatch_maker = transforms.UnBatch((nch, Ny_pad, Nx_pad))
+        
+        output_imgs = process_ml(gkmap, batch_maker)
+        output_imgs = post_process(output_imgs, unbatch_maker)
+
+        output_imgs = enmap.enmap(self.unnormalizer(output_imgs), wcs)
+        
+        for post_process in post_processes:
+            output_imgs = post_process(output_imgs) 
+        return output_imgs
         alms = None
 
         

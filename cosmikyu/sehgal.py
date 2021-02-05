@@ -8,6 +8,8 @@ from orphics import maps as omaps
 from pixell import enmap, utils, curvedsky, powspec
 import pylops, cupy as cp
 from . import transforms, nn as cnn, model
+from multiprocessing import Pool
+
 
 default_tcmb = 2.726
 H_CGS = 6.62608e-27
@@ -586,7 +588,7 @@ class SehgalNetwork(object):
 
 class SehgalNetworkFullSky(object):
     def __init__(self,  cuda, ngpu, nbatch, norm_info_file, pixgan_state_file, tuner_state_file,
-                 clkk_spec_file, transfer_file, taper_width, xgrid_file=None, xgrid_inv_file=None, cache_dir=None):
+                 clkk_spec_file, transfer_file, taper_width, nprocess=1, xgrid_file=None, xgrid_inv_file=None, weight_file = None, cache_dir=None):
         ## fixed full sky geometry
         self.shape = (21600, 43200) 
         _ , self.wcs = enmap.fullsky_geometry(res=0.5*utils.arcmin)
@@ -609,7 +611,8 @@ class SehgalNetworkFullSky(object):
         self.cache_dir = cache_dir
         if self.cache_dir is None:
             self.cache_dir = os.path.join(os.getcwd(), "cache")
-
+        
+        self.nprocess = nprocess
         self.cuda = cuda
         self.ngpu = 0 if not self.cuda else ngpu
         if torch.cuda.is_available() and not cuda:
@@ -671,6 +674,12 @@ class SehgalNetworkFullSky(object):
         self.xgrid_inv_file = xgrid_inv_file
         self.xgrid = None
         self.xgrid_inv = None
+        self.xscales = None
+        ## load weight later
+        self.weight_file = weight_file
+        self.weight = None
+
+        self.taper = None
 
     def _get_xgrid(self):
         if self.xgrid is None:
@@ -687,14 +696,20 @@ class SehgalNetworkFullSky(object):
             else:
                 self._generate_xgrid_info()
         return self.xgrid_inv
-   
+  
+    def _get_xscales(self):
+        if self.xscales is None:
+            pixshapemap = enmap.pixshapemap(self.shape[-2:], self.wcs)
+            dxs = pixshapemap[1,:,0]/utils.arcmin
+            self.xscales = 0.5/dxs
+
+        return self.xscales
     def _generate_xgrid_info(self):
         shape = self.shape[-2:]
         wcs = self.wcs 
-        xgrid = np.zeros(self.shape_padded) 
-        pixshapemap = enmap.pixshapemap(shape, wcs)
-        dxs = pixshapemap[1,:,0]/utils.arcmin
-        xscales = 0.5/dxs
+        xgrid = np.zeros(self.shape_padded)  
+        xgrid_inv = np.zeros(self.shape_padded) 
+        xscales = self._get_xscales()
         #loc = np.where(xscales<=1.05)
         num_ybatch = self.num_batch[0]
         num_xbatch = self.num_batch[1]
@@ -716,18 +731,106 @@ class SehgalNetworkFullSky(object):
                     xmidx = xsidx+stamp_shape[1]//2
                     xsidx = int(xmidx - xwidths[ycidx%shape[0]])
                     xeidx = int(xmidx + xwidths[ycidx%shape[0]])
-                    xgrid_vald = np.linspace(xsidx, xeidx, stamp_shape[1]) % shape[1]
+                    
+                    ## edge fix
+                    '''
+                    if xidx == 0:
+                        xeidx -= xsidx
+                        xsidx = 0
+                    elif xidx == num_xbatch-1:
+                        diff = xeidx - (shape[1]-1)
+                        xsidx -= diff
+                        xeidx = (shape[1]-1)
+                    '''
+
+                    xgrid_vald = np.linspace(xsidx, xeidx, stamp_shape[1]) #% shape[1]
 
                     xosidx = xidx*(stamp_shape[1])
                     xoeidx = xosidx+stamp_shape[1]
                     xgrid[yocidx,xosidx:xoeidx] = xgrid_vald
-            
-        xgrid_inv = xgrid.copy()
-        for i in range(xgrid.shape[0]):
-            xgrid_inv[i,:]  = np.argsort(xgrid[i,:])
+                    xgrid_inv[yocidx,xosidx:xoeidx] =  np.argsort(xgrid[yocidx,xosidx:xoeidx]% shape[1]) 
 
         self.xgrid = xgrid.astype(np.float32)
         self.xgrid_inv = xgrid_inv.astype(np.uint16)
+        #xgrid_inv = xgrid.copy()
+        #for i in range(xgrid.shape[0]):
+        #    xgrid_inv[i,:]  = np.argsort(xgrid[i,:])
+        #self.xgrid = xgrid.astype(np.float32)
+        #self.xgrid_inv = xgrid_inv.astype(np.uint16)
+
+    def _get_taper(self):
+        if self.taper is None:
+            ny, nx = self.stamp_shape[-2:]
+            taper = omaps.cosine_window(ny, nx, self.taper_width, self.taper_width)
+            minval = np.min(taper[taper != 0])
+            taper[taper == 0] = minval
+            self.taper = taper
+        return self.taper.copy()
+    def _get_weight(self, overwrite=False):
+        if self.weight is None:
+            if self.weight_file is not None and not overwrite:
+                self.weight = np.load(self.weight_file)
+            else:
+                Ny, Nx = self.shape
+                ny, nx = self.stamp_shape[-2:]
+                taper_width = self.taper_width
+                nbatchy, nbatchx = self.num_batch
+                batch_idxes = np.array_split(np.arange(nbatchy), min(nbatchy,self.nprocess)) 
+                stamp = self._get_taper()
+                xgrid = self._get_xgrid()
+                
+                self.weight = np.zeros((2, Ny, Nx), dtype=np.float32)
+                for i, method in enumerate(["interp", "linear"]):
+                    global _generate_weight_core
+                    def _generate_weight_core(batch_idxes, method=method):
+                        retysidx = batch_idxes[0]*(ny-taper_width)
+                        retyeidx = min(batch_idxes[-1]*(ny-taper_width)+ny,Ny)
+                        ret = np.zeros((retyeidx-retysidx, Nx))
+                        for yidx in batch_idxes:
+                            ysidx = yidx*(ny-taper_width)
+                            yeidx = min(ysidx+ny,Ny)
+                            yoffset = taper_width*yidx
+                            yosidx = ysidx*ny
+                            yoeidx = yosidx+ny
+                            for xidx in range(nbatchx):
+                                xosidx = xidx*nx
+                                xoeidx = xosidx+nx
+                                for j, ycidx in enumerate(np.arange(ysidx, yeidx)):
+                                    if ycidx >= Ny:
+                                        continue
+                                    yrcidx = ycidx-retysidx 
+                                    yocidx = ycidx+yoffset  
+                                    xvals = xgrid[yocidx,xosidx:xoeidx]
+                                    if method == "linear":
+                                        #xmin = int(np.ceil(xvals[0]))
+                                        #xmax = int(np.floor(xvals[-1]))
+                                        #xin = np.arange(xmin,xmax+1)
+                                        #xin = np.arange(xmin,xmax+1)[:Nx]
+                                        #yvals = stamp[j,:].copy()
+                                        xin = np.round(xvals).astype(np.int)
+                                        yvals = np.ones(len(xin))
+                                        #yvals = stamp[j,:].copy() 
+                                        ret[yrcidx,xin%Nx] += yvals
+                                    elif method == "interp": 
+                                        xmin = int(np.ceil(xvals[0]))
+                                        xmax = int(np.floor(xvals[-1]))
+                                        xin = np.arange(xmin,xmax+1)
+                                        xin = np.arange(xmin,xmax+1)[:Nx] 
+                                        yvals = stamp[j,:].copy() 
+                                        fit = scipy.interpolate.interp1d(xvals, yvals, assume_sorted=True)
+                                        ret[yrcidx,xin%Nx] += fit(xin); del fit
+                        return ((retysidx,retyeidx), ret)
+                    with Pool(len(batch_idxes)) as p:
+                        storage = p.map(_generate_weight_core, batch_idxes)
+                    del _generate_weight_core
+                    for idxes, ring in storage:
+                        self.weight[i, idxes[0]:idxes[1],:] += ring
+                    del storage
+
+                loc = np.where(self.weight[1] == 0)
+                self.weight[1][loc] = np.inf; del loc
+        return self.weight
+                        
 
     def _generate_input_kappa(self, seed=None, conv_beam=False):
         np.random.seed(seed)
@@ -745,6 +848,9 @@ class SehgalNetworkFullSky(object):
         if use_cache: 
             os.makedirs(self.cache_dir, exist_ok=True)
 
+        ## force the boundary condition
+        #gkmap[:,:,-1] = (gkmap[:,:,-2]-gkmap[:,:,0])/2
+
         nch, Ny, Nx = gkmap.shape
         Ny_pad, Nx_pad = self.shape_padded
         wcs = gkmap.wcs
@@ -752,31 +858,63 @@ class SehgalNetworkFullSky(object):
         taper_width = self.taper_width
         nbatchy, nbatchx = self.num_batch 
         xgrid = self._get_xgrid()
-        sampled = np.zeros((nch,)+self.shape_padded)
-        xin = np.arange(Nx)
-        for yidx in range(nbatchy):
-            if verbose and yidx % 10 == 0:
-                print(f"sampling {(yidx)/nbatchy*100:.1f} perc completed")
-            ysidx = yidx*(ny-taper_width)
-            yeidx = ysidx+ny
-            yoffset = taper_width*yidx
+        taper = self._get_taper() 
+        #sampled = np.zeros((nch,)+self.shape_padded)
+       	batch_idxes = np.array_split(np.arange(nbatchy), min(nbatchy,self.nprocess))	
         
-            for ycidx in range(ysidx, yeidx):
-                yocidx = ycidx+yoffset
-                if (ycidx)//Ny:
-                    ycidx = Ny-(ycidx%Ny+1)
-                cs = scipy.interpolate.CubicSpline(xin, gkmap[0, ycidx,:])
-                sampled[0,yocidx,:] = cs(xgrid[yocidx,:])
-        del xin, cs
+        ## wrap around the edge
+        #gkmap = np.pad(gkmap, ((0,0),(0,0),(nx,nx)),mode="reflect") ##
+        #xin = np.arange(-1*nx, Nx+nx) ##
+        #xin = xin = np.arange(Nx)
+        xin = np.arange(Nx+1)
+        if verbose: print("start sampling")
+        global _get_sampled
+        def _get_sampled(batch_idxes):
+            retysidx = batch_idxes[0]*(ny)
+            retyeidx = (batch_idxes[-1]+1)*(ny)
+            ret = np.zeros((retyeidx-retysidx, Nx_pad))
+            for i, yidx in enumerate(batch_idxes):
+                ysidx = yidx*(ny-taper_width)
+                yeidx = min(ysidx+ny, Ny)
+                yoffset = yidx*taper_width
+		
+                for ycidx in np.arange(ysidx, yeidx):
+                    if ycidx >= Ny:
+                        continue
+                    yocidx = ycidx+yoffset
+                    yrcidx = yocidx-retysidx
+                    yvals = np.append(gkmap[0,ycidx,:],gkmap[0,ycidx,0])
+                    #fit = scipy.interpolate.CubicSpline(xin, gkmap[0,ycidx,:])
+                    fit =  scipy.interpolate.CubicSpline(xin,yvals, bc_type="periodic")
+                    #fit = scipy.interpolate.interp1d(xin, gkmap[0,ycidx,:], assume_sorted=True) 
+                    xval = xgrid[yocidx,:]% Nx
+
+                    #loc = xval > (Nx-1)
+                    #xval[loc] -= (Nx-1)
+                    
+                    ret[yrcidx,:] = fit(xval)
+            return ret
+
+        with Pool(len(batch_idxes)) as p:
+            sampled = p.map(_get_sampled, batch_idxes)
+        sampled = np.vstack(sampled) 
+        sampled = sampled[np.newaxis,...]
+        if verbose: print("end sampling")
+        del _get_sampled, xin
+        
         if polfix:
-            if verbose: print("pol fix")
-            sampled[:,:ny,:] = np.flip(sampled[:,ny:2*ny,:],1)
-            sampled[:,-ny:,:] = np.flip(sampled[:,-2*ny:-ny:],1)
+            if verbose: print("pol fix") 
+            sampled[:,:2*ny,:] = np.flip(sampled[:,2*ny:4*ny,:],1)
+            sampled[:,-2*ny:,:] = np.flip(sampled[:,-4*ny:-2*ny,:],1) 
+            #sampled[:,:ny,:] = np.flip(sampled[:,ny:2*ny,:],1)
+            #sampled[:,-ny:,:] = np.flip(sampled[:,-2*ny:-ny,:],1) 
+            #sampled[:,:,:nx] = np.flip(sampled[:,:,nx:2*nx],1)
+            #sampled[:,:,-nx:] = sampled[:,:,nx:2*nx].copy()
 
         #return sampled 
         del gkmap; gkmap = sampled
         gkmap = self.normalizer(gkmap)
-
+        #return gkmap
         def process_ml(input_imgs, batch_maker):
             input_imgs = batch_maker(input_imgs)
             nsample = input_imgs.shape[0]
@@ -803,14 +941,76 @@ class SehgalNetworkFullSky(object):
         batch_maker = transforms.Batch((nch, ny, nx)) 
         unbatch_maker = transforms.UnBatch((nch, Ny_pad, Nx_pad))
         
-        output_imgs = process_ml(gkmap, batch_maker)
-        output_imgs = post_process(output_imgs, unbatch_maker)
-
-        output_imgs = enmap.enmap(self.unnormalizer(output_imgs), wcs)
+        processed = process_ml(gkmap, batch_maker); del gkmap
+        processed = post_process(processed, unbatch_maker)
+        #processed = enmap.enmap(self.unnormalizer(processed), wcs)
         
         for post_process in post_processes:
-            output_imgs = post_process(output_imgs) 
-        return output_imgs
+            processed = post_process(processed) 
+        reprojected = np.zeros((5,Ny,Nx), dtype=np.float32)
+        for compt_idx in range(0,5):
+            method = "interp" if compt_idx < 3 else "remap"
+            global _get_reprojected
+            def _get_reprojected(batch_idxes, method=method):
+                retysidx = batch_idxes[0]*(ny-taper_width)
+                retyeidx = min(batch_idxes[-1]*(ny-taper_width)+ny,Ny)
+                ret = np.zeros((retyeidx-retysidx, Nx))
+
+                for yidx in batch_idxes:
+                    ysidx = yidx*(ny-taper_width)
+                    yeidx = min(ysidx+ny,Ny)
+                    yoffset = taper_width*yidx
+                    for xidx in range(nbatchx):
+                        xosidx = xidx*nx
+                        xoeidx = xosidx+nx
+                        for j, ycidx in enumerate(np.arange(ysidx, yeidx)):
+                            if ycidx >= Ny:
+                                continue
+                            yrcidx = ycidx-retysidx
+                            yocidx = ycidx+yoffset
+                            yvals = processed[compt_idx,yocidx,xosidx:xoeidx]
+                            xvals = xgrid[yocidx,xosidx:xoeidx]
+                            if method == "remap":
+                                xin = np.round(xvals).astype(np.int)
+                                yvals = yvals#*taper[j,:]
+                                ret[yrcidx,xin%Nx] += yvals
+                            elif method == "interp":
+                                xmin = int(np.ceil(xvals[0]))
+                                xmax = int(np.floor(xvals[-1]))
+                                xin = np.arange(xmin,xmax+1)
+                                xin = np.arange(xmin,xmax+1)[:Nx]
+                                yvals = yvals*taper[j,:]
+                                fit = scipy.interpolate.interp1d(xvals, yvals, assume_sorted=True)
+                                ret[yrcidx,xin%Nx] += fit(xin)
+                            else:
+                                assert(False)
+                return ((retysidx,retyeidx), ret)
+
+            with Pool(len(batch_idxes)) as p:
+                storage = p.map(_get_reprojected, batch_idxes)
+            for idxes, ring in storage:
+                reprojected[compt_idx, idxes[0]:idxes[1],:] += ring
+            del storage, _get_reprojected
+        del processed 
+        ## weight correction for diffused
+
+        reprojected[:3] = reprojected[:3]/self._get_weight()[0]
+
+        reprojected = enmap.enmap(self.unnormalizer(reprojected), wcs)
+        return reprojected
+        ## area correction for point sources
+        #reprojected[3:] = reprojected[3:]*(SN._get_xscales()[:,np.newaxis]) 
+        ## hit count correction for point sources 
+        #reprojected[3:] = reprojected[3:]/SN._get_weight()[1] 
+
+        #loc = np.where(SN._get_weight()[1] != 0)
+        '''
+        lin_weight = SN._get_weight()[1][loc]
+        for compt_idx in range(3,5):
+            reprojected[compt_idx][loc] = reprojected[compt_idx][loc]/lin_weight
+        del loc, lin_weight
+        '''
+    
         alms = None
 
         

@@ -7,9 +7,10 @@ import torch
 from orphics import maps as omaps
 from pixell import enmap, utils, curvedsky, powspec
 import pylops, cupy as cp
-from . import transforms, nn as cnn, model
+from . import transforms, nn as cnn, model, stats
 from multiprocessing import Pool
-
+import gc
+import pandas as pd
 
 default_tcmb = 2.726
 H_CGS = 6.62608e-27
@@ -802,14 +803,8 @@ class SehgalNetworkFullSky(object):
                                     yocidx = ycidx+yoffset  
                                     xvals = xgrid[yocidx,xosidx:xoeidx]
                                     if method == "linear":
-                                        #xmin = int(np.ceil(xvals[0]))
-                                        #xmax = int(np.floor(xvals[-1]))
-                                        #xin = np.arange(xmin,xmax+1)
-                                        #xin = np.arange(xmin,xmax+1)[:Nx]
-                                        #yvals = stamp[j,:].copy()
                                         xin = np.round(xvals).astype(np.int)
                                         yvals = np.ones(len(xin))
-                                        #yvals = stamp[j,:].copy() 
                                         ret[yrcidx,xin%Nx] += yvals
                                     elif method == "interp": 
                                         xmin = int(np.ceil(xvals[0]))
@@ -838,7 +833,7 @@ class SehgalNetworkFullSky(object):
         alm = curvedsky.rand_alm(clkk)
         return curvedsky.alm2map(alm, self.template.copy())[np.newaxis, ...]
 
-    def generate_samples(self, seed=None, verbose=True, input_kappa=None, transfer=True,  post_processes=[], use_cache=True, flux_cut=10, polfix=True):
+    def generate_samples(self, seed=None, verbose=True, input_kappa=None, transfer=True,  post_processes=[], use_cache=True, flux_cut=7, polfix=True):
         if input_kappa is None:
             if verbose: print("making input gaussian kappa")
             gkmap = self._generate_input_kappa(seed=seed)
@@ -848,9 +843,6 @@ class SehgalNetworkFullSky(object):
         if use_cache: 
             os.makedirs(self.cache_dir, exist_ok=True)
 
-        ## force the boundary condition
-        #gkmap[:,:,-1] = (gkmap[:,:,-2]-gkmap[:,:,0])/2
-
         nch, Ny, Nx = gkmap.shape
         Ny_pad, Nx_pad = self.shape_padded
         wcs = gkmap.wcs
@@ -859,13 +851,8 @@ class SehgalNetworkFullSky(object):
         nbatchy, nbatchx = self.num_batch 
         xgrid = self._get_xgrid()
         taper = self._get_taper() 
-        #sampled = np.zeros((nch,)+self.shape_padded)
        	batch_idxes = np.array_split(np.arange(nbatchy), min(nbatchy,self.nprocess))	
         
-        ## wrap around the edge
-        #gkmap = np.pad(gkmap, ((0,0),(0,0),(nx,nx)),mode="reflect") ##
-        #xin = np.arange(-1*nx, Nx+nx) ##
-        #xin = xin = np.arange(Nx)
         xin = np.arange(Nx+1)
         if verbose: print("start sampling")
         global _get_sampled
@@ -884,14 +871,9 @@ class SehgalNetworkFullSky(object):
                     yocidx = ycidx+yoffset
                     yrcidx = yocidx-retysidx
                     yvals = np.append(gkmap[0,ycidx,:],gkmap[0,ycidx,0])
-                    #fit = scipy.interpolate.CubicSpline(xin, gkmap[0,ycidx,:])
                     fit =  scipy.interpolate.CubicSpline(xin,yvals, bc_type="periodic")
-                    #fit = scipy.interpolate.interp1d(xin, gkmap[0,ycidx,:], assume_sorted=True) 
                     xval = xgrid[yocidx,:]% Nx
 
-                    #loc = xval > (Nx-1)
-                    #xval[loc] -= (Nx-1)
-                    
                     ret[yrcidx,:] = fit(xval)
             return ret
 
@@ -904,17 +886,11 @@ class SehgalNetworkFullSky(object):
         
         if polfix:
             if verbose: print("pol fix") 
-            sampled[:,:2*ny,:] = np.flip(sampled[:,2*ny:4*ny,:],1)
-            sampled[:,-2*ny:,:] = np.flip(sampled[:,-4*ny:-2*ny,:],1) 
-            #sampled[:,:ny,:] = np.flip(sampled[:,ny:2*ny,:],1)
-            #sampled[:,-ny:,:] = np.flip(sampled[:,-2*ny:-ny,:],1) 
-            #sampled[:,:,:nx] = np.flip(sampled[:,:,nx:2*nx],1)
-            #sampled[:,:,-nx:] = sampled[:,:,nx:2*nx].copy()
+            sampled[:,:1*ny,:] = np.flip(sampled[:,1*ny:2*ny,:],1)
+            sampled[:,-1*ny:,:] = np.flip(sampled[:,-2*ny:-1*ny,:],1) 
 
-        #return sampled 
         del gkmap; gkmap = sampled
         gkmap = self.normalizer(gkmap)
-        #return gkmap
         def process_ml(input_imgs, batch_maker):
             input_imgs = batch_maker(input_imgs)
             nsample = input_imgs.shape[0]
@@ -943,12 +919,13 @@ class SehgalNetworkFullSky(object):
         
         processed = process_ml(gkmap, batch_maker); del gkmap
         processed = post_process(processed, unbatch_maker)
-        #processed = enmap.enmap(self.unnormalizer(processed), wcs)
-        
+       
         for post_process in post_processes:
             processed = post_process(processed) 
+        processed = self.unnormalizer(processed) 
         reprojected = np.zeros((5,Ny,Nx), dtype=np.float32)
-        for compt_idx in range(0,5):
+        for compt_idx in range(0,3):
+            if verbose: print(f"reprojecting images {compt_idx}")
             method = "interp" if compt_idx < 3 else "remap"
             global _get_reprojected
             def _get_reprojected(batch_idxes, method=method):
@@ -991,26 +968,133 @@ class SehgalNetworkFullSky(object):
             for idxes, ring in storage:
                 reprojected[compt_idx, idxes[0]:idxes[1],:] += ring
             del storage, _get_reprojected
-        del processed 
         ## weight correction for diffused
 
         reprojected[:3] = reprojected[:3]/self._get_weight()[0]
 
-        reprojected = enmap.enmap(self.unnormalizer(reprojected), wcs)
-        return reprojected
-        ## area correction for point sources
-        #reprojected[3:] = reprojected[3:]*(SN._get_xscales()[:,np.newaxis]) 
-        ## hit count correction for point sources 
-        #reprojected[3:] = reprojected[3:]/SN._get_weight()[1] 
+        ## process point sources
+        jysr2uk = jysr2thermo(148)
+        decs, _ = enmap.posaxes((Ny,Nx), wcs)
+        ptbatchy = nbatchy+1
 
-        #loc = np.where(SN._get_weight()[1] != 0)
-        '''
-        lin_weight = SN._get_weight()[1][loc]
-        for compt_idx in range(3,5):
-            reprojected[compt_idx][loc] = reprojected[compt_idx][loc]/lin_weight
-        del loc, lin_weight
-        '''
-    
+        ptbatch_idxes = np.array_split(np.arange(ptbatchy), min(ptbatchy,self.nprocess))
+        mlsims_pts = processed[3:,...].copy(); del processed
+        mlsims_catalogs = {}
+        for i, compt_idx in enumerate(["ir", "rad"]):
+            if verbose:
+                print(f"making pt source cats {compt_idx}")
+            gc.collect()
+            global _make_catalog
+            def _make_catalog(batch_idxes, compt_idx = i):
+                yosidx = batch_idxes[0]*int(ny)-int(0.5*ny)
+                yoeidx = (batch_idxes[-1]+1)*int(ny)-int(0.5*ny)
+                yosidx = max(yosidx,0)
+                
+                
+                loc = np.where(mlsims_pts[compt_idx,yosidx:yoeidx] >= 0)
+                cat = np.zeros((len(loc[0]),3))
+                yoidxes = (loc[0].copy()+yosidx)
+                a = yoidxes // ny 
+                b = yoidxes % ny 
+
+                cat[:,0] = a*(ny-taper_width)+b; del a,b
+                cat[:,1] = xgrid[yosidx:yoeidx][loc].copy() 
+                cat[:,1] %= Nx
+                cat[:,2] = mlsims_pts[compt_idx,yosidx:yoeidx][loc].copy()
+                cat[:,2] *= (1/jysr2uk*1e3*(0.5*utils.arcmin)**2)
+               
+                del loc
+                if cat[-1,0] >= Ny:
+                    rloc = np.where(cat[:,0]<Ny)
+                    cat = cat[rloc[0],:]; del rloc                
+
+                cat = pd.DataFrame(cat, columns=['dec','ra', 'I'])
+                cat = cat.sort_values(['dec', 'ra'], ascending=[True, True])
+                cat.reset_index(drop=True, inplace=True)
+                pddec_idxes = cat.groupby("dec").indices
+                
+                merged = []
+                for i, dec_idx in enumerate(pddec_idxes):
+                    dec = decs[int(dec_idx)]
+                    scale = (0.5*utils.arcmin)/max(np.cos(dec), (0.5*utils.arcmin)/(2*np.pi))
+                    nsegment = int(np.round((np.ceil(2*np.pi/scale))))
+                    cat_sub = cat.iloc[pddec_idxes[dec_idx]].to_numpy()
+                    
+                    RB = stats.FastBINNER(0,Nx,nsegment)
+                    _, ra_bincount = RB.bin(cat_sub[:,1])
+                    ra_bincount = np.int64(ra_bincount)
+                    
+                    delta_ra = Nx//nsegment
+                    ras_resd = Nx%nsegment
+                    shift_idxes = sorted(np.random.choice(nsegment, size=ras_resd, replace=False))
+                    shifts = np.zeros(nsegment, dtype=np.int)
+                    shifts[shift_idxes] = +1
+                    ras = np.arange(nsegment)*delta_ra
+                    ras += np.random.randint(delta_ra, size=nsegment)
+                    ras += np.cumsum(shifts)
+                    
+                    del delta_ra, ras_resd, shifts, RB
+
+                    ctr = 0
+                    reduced = []
+                    for j in range(nsegment):
+                        ccount = ra_bincount[j]
+                        if ccount == 0:
+                            continue
+
+                        row = np.zeros(3)
+                        row[1] = ras[j]
+                        if ccount == 1:
+                            row[2] = cat_sub[ctr,2]
+                        else:
+                            row[2] = np.random.choice(cat_sub[ctr:ctr+ccount,2], 1)  
+                        if row[2] != 0: 
+                            reduced.append(row)
+                        ctr += ccount
+                    cat_sub = np.array(reduced).reshape((len(reduced),3))
+                    cat_sub[:,0] = dec_idx
+                    del ra_bincount, reduced, ras
+                    
+                    merged.append(cat_sub)
+                del cat
+                merged = np.vstack(merged)
+                
+                ## flux correction
+                merged[:,2] *= 1.1
+
+                if compt_idx == 0:
+                    loc =  np.where(merged[:,2] > 1)
+                    merged[loc[0],2] = merged[loc[0],2]**0.55
+                    del loc
+                
+                if flux_cut is not None:
+                    loc = np.where(merged[:,2]<=flux_cut)
+                    merged = merged[loc[0],...]
+                    del loc
+
+                return np.float32(merged)
+
+
+            with Pool(len(batch_idxes)) as p:
+                storage = p.map(_make_catalog, ptbatch_idxes)
+            del _make_catalog
+            mlsims_catalogs[compt_idx] = np.vstack(storage)
+            
+        del decs, ptbatch_idxes,
+        ## catalog to map 
+        gc.collect()
+        pixsizemap = enmap.pixsizemap((Ny, Nx),wcs)
+        conv = ((1e-3*jysr2thermo(148))/pixsizemap); del pixsizemap
+        for i, compt_idx in enumerate(["ir", "rad"]):
+            cat = mlsims_catalogs[compt_idx] 
+            reprojected[([i+3],np.int64(cat[:,0]), np.int64(cat[:,1]))]= cat[:,2]
+            reprojected[i+3] = reprojected[i+3]*conv
+
+        #del mlsims_catalogs
+
+        return reprojected#, mlsims_catalogs
+
+
         alms = None
 
         

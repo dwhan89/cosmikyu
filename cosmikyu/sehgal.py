@@ -709,7 +709,6 @@ class SehgalNetworkFullSky(object):
         shape = self.shape[-2:]
         wcs = self.wcs 
         xgrid = np.zeros(self.shape_padded)  
-        xgrid_inv = np.zeros(self.shape_padded) 
         xscales = self._get_xscales()
         #loc = np.where(xscales<=1.05)
         num_ybatch = self.num_batch[0]
@@ -733,31 +732,28 @@ class SehgalNetworkFullSky(object):
                     xsidx = int(xmidx - xwidths[ycidx%shape[0]])
                     xeidx = int(xmidx + xwidths[ycidx%shape[0]])
                     
-                    ## edge fix
-                    '''
-                    if xidx == 0:
-                        xeidx -= xsidx
-                        xsidx = 0
-                    elif xidx == num_xbatch-1:
-                        diff = xeidx - (shape[1]-1)
-                        xsidx -= diff
-                        xeidx = (shape[1]-1)
-                    '''
 
                     xgrid_vald = np.linspace(xsidx, xeidx, stamp_shape[1]) #% shape[1]
 
                     xosidx = xidx*(stamp_shape[1])
                     xoeidx = xosidx+stamp_shape[1]
                     xgrid[yocidx,xosidx:xoeidx] = xgrid_vald
-                    xgrid_inv[yocidx,xosidx:xoeidx] =  np.argsort(xgrid[yocidx,xosidx:xoeidx]% shape[1]) 
+                    #xgrid_inv[yocidx,xosidx:xoeidx] =  np.argsort(xgrid[yocidx,xosidx:xoeidx]% shape[1]) 
 
         self.xgrid = xgrid.astype(np.float32)
-        self.xgrid_inv = xgrid_inv.astype(np.uint16)
-        #xgrid_inv = xgrid.copy()
-        #for i in range(xgrid.shape[0]):
-        #    xgrid_inv[i,:]  = np.argsort(xgrid[i,:])
-        #self.xgrid = xgrid.astype(np.float32)
-        #self.xgrid_inv = xgrid_inv.astype(np.uint16)
+        
+ 
+        posmap = enmap.posmap(shape, wcs) 
+        dec = posmap[0].flatten()
+        ra = posmap[1].flatten()
+        dec += np.pi/2
+        dec %= np.pi
+        ra += np.pi
+        ra %= (2*np.pi)
+        xgrid_inv = hp.pixelfunc.ang2pix(8192, dec, ra); del posmap, dec, ra
+        xgrid_inv = xgrid_inv.reshape(shape)
+    
+        self.xgrid_inv = xgrid_inv.astype(np.int32)
 
     def _get_taper(self):
         if self.taper is None:
@@ -781,7 +777,7 @@ class SehgalNetworkFullSky(object):
                 xgrid = self._get_xgrid()
                 
                 self.weight = np.zeros((2, Ny, Nx), dtype=np.float32)
-                for i, method in enumerate(["interp", "linear"]):
+                for i, method in enumerate(["interp", "nearest"]):
                     global _generate_weight_core
                     def _generate_weight_core(batch_idxes, method=method):
                         retysidx = batch_idxes[0]*(ny-taper_width)
@@ -801,19 +797,22 @@ class SehgalNetworkFullSky(object):
                                         continue
                                     yrcidx = ycidx-retysidx 
                                     yocidx = ycidx+yoffset  
-                                    xvals = xgrid[yocidx,xosidx:xoeidx]
-                                    if method == "linear":
-                                        xin = np.round(xvals).astype(np.int)
-                                        yvals = np.ones(len(xin))
-                                        ret[yrcidx,xin%Nx] += yvals
+                                    xvals = xgrid[yocidx,xosidx:xoeidx] 
+                                    xmin = int(np.ceil(xvals[0]))
+                                    xmax = int(np.floor(xvals[-1]))
+                                    xin = np.arange(xmin,xmax+1)
+                                    xin = np.arange(xmin,xmax+1)[:Nx] 
+                                    
+                                    if method == "nearest":
+                                        #xin = np.round(xvals).astype(np.int)
+                                        #yvals = np.ones(len(xvals))
+                                        yvals = stamp[j,:].copy()
+                                        fit = scipy.interpolate.interp1d(xvals, yvals, assume_sorted=True, kind="nearest")
+                                        #ret[yrcidx,xin%Nx] += yvals
                                     elif method == "interp": 
-                                        xmin = int(np.ceil(xvals[0]))
-                                        xmax = int(np.floor(xvals[-1]))
-                                        xin = np.arange(xmin,xmax+1)
-                                        xin = np.arange(xmin,xmax+1)[:Nx] 
                                         yvals = stamp[j,:].copy() 
                                         fit = scipy.interpolate.interp1d(xvals, yvals, assume_sorted=True)
-                                        ret[yrcidx,xin%Nx] += fit(xin); del fit
+                                    ret[yrcidx,xin%Nx] += fit(xin); del fit
                         return ((retysidx,retyeidx), ret)
                     with Pool(len(batch_idxes)) as p:
                         storage = p.map(_generate_weight_core, batch_idxes)
@@ -922,11 +921,15 @@ class SehgalNetworkFullSky(object):
        
         for post_process in post_processes:
             processed = post_process(processed) 
+
         processed = self.unnormalizer(processed) 
+        for i in range(3,5):
+            loc = np.where(processed[i] < 0)
+            processed[i][loc] = 0.; del loc
         reprojected = np.zeros((5,Ny,Nx), dtype=np.float32)
-        for compt_idx in range(0,3):
+        for compt_idx in range(0,5):
             if verbose: print(f"reprojecting images {compt_idx}")
-            method = "interp" if compt_idx < 3 else "remap"
+            method = "interp" if compt_idx < 5 else "nearest"
             global _get_reprojected
             def _get_reprojected(batch_idxes, method=method):
                 retysidx = batch_idxes[0]*(ny-taper_width)
@@ -947,20 +950,25 @@ class SehgalNetworkFullSky(object):
                             yocidx = ycidx+yoffset
                             yvals = processed[compt_idx,yocidx,xosidx:xoeidx]
                             xvals = xgrid[yocidx,xosidx:xoeidx]
-                            if method == "remap":
+                            
+                            xmin = int(np.ceil(xvals[0]))
+                            xmax = int(np.floor(xvals[-1]))
+                            xin = np.arange(xmin,xmax+1)
+                            xin = np.arange(xmin,xmax+1)[:Nx]
+                             
+                            if method == "nearest":
                                 xin = np.round(xvals).astype(np.int)
-                                yvals = yvals#*taper[j,:]
-                                ret[yrcidx,xin%Nx] += yvals
+                                spread_fact = ny/max(xmax-xmin,ny)
+                                yvals = yvals*taper[j,:]*spread_fact
+                                #yvals = yvals*spread_fact
+                                #ret[yrcidx,xin%Nx] += yvals
+                                fit = scipy.interpolate.interp1d(xvals, yvals, assume_sorted=True, kind="nearest")
                             elif method == "interp":
-                                xmin = int(np.ceil(xvals[0]))
-                                xmax = int(np.floor(xvals[-1]))
-                                xin = np.arange(xmin,xmax+1)
-                                xin = np.arange(xmin,xmax+1)[:Nx]
                                 yvals = yvals*taper[j,:]
                                 fit = scipy.interpolate.interp1d(xvals, yvals, assume_sorted=True)
-                                ret[yrcidx,xin%Nx] += fit(xin)
                             else:
                                 assert(False)
+                            ret[yrcidx,xin%Nx] += fit(xin)
                 return ((retysidx,retyeidx), ret)
 
             with Pool(len(batch_idxes)) as p:
@@ -970,7 +978,9 @@ class SehgalNetworkFullSky(object):
             del storage, _get_reprojected
         ## weight correction for diffused
 
-        reprojected[:3] = reprojected[:3]/self._get_weight()[0]
+        reprojected[:5] = reprojected[:5]/self._get_weight()[0] 
+        #reprojected[3:5] = reprojected[3:5]/self._get_weight()[1]
+        return reprojected
 
         ## process point sources
         jysr2uk = jysr2thermo(148)

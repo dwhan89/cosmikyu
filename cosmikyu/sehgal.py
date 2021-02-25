@@ -563,7 +563,7 @@ class SehgalNetwork(object):
             loc = np.where(lowflux>cut)
             lowflux[loc] = 0.
             highflux = target-lowflux
-            highflux = highflux**0.61
+            highflux = highflux**0.7
             #loc = np.where(highflux<cut)
             #highflux[loc] = 0
             target = lowflux+highflux
@@ -832,7 +832,7 @@ class SehgalNetworkFullSky(object):
         alm = curvedsky.rand_alm(clkk)
         return curvedsky.alm2map(alm, self.template.copy())[np.newaxis, ...]
 
-    def generate_samples(self, seed=None, verbose=True, input_kappa=None, transfer=True,  post_processes=[], use_cache=True, flux_cut=7, polfix=True):
+    def generate_samples(self, seed=None, verbose=True, input_kappa=None, transfer=True,  post_processes=[], use_cache=True, flux_cut=7, polfix=True, test=None):
         if input_kappa is None:
             if verbose: print("making input gaussian kappa")
             gkmap = self._generate_input_kappa(seed=seed)
@@ -875,61 +875,78 @@ class SehgalNetworkFullSky(object):
 
                     ret[yrcidx,:] = fit(xval)
             return ret
+        if test is None:
+            with Pool(len(batch_idxes)) as p:
+                sampled = p.map(_get_sampled, batch_idxes)
+            sampled = np.vstack(sampled) 
+            sampled = sampled[np.newaxis,...]
+            if verbose: print("end sampling")
+            del _get_sampled, xin
+            
+            if polfix:
+                if verbose: print("pol fix") 
+                sampled[:,:1*ny,:] = np.flip(sampled[:,1*ny:2*ny,:],1)
+                sampled[:,-1*ny:,:] = np.flip(sampled[:,-2*ny:-1*ny,:],1) 
 
-        with Pool(len(batch_idxes)) as p:
-            sampled = p.map(_get_sampled, batch_idxes)
-        sampled = np.vstack(sampled) 
-        sampled = sampled[np.newaxis,...]
-        if verbose: print("end sampling")
-        del _get_sampled, xin
-        
-        if polfix:
-            if verbose: print("pol fix") 
-            sampled[:,:1*ny,:] = np.flip(sampled[:,1*ny:2*ny,:],1)
-            sampled[:,-1*ny:,:] = np.flip(sampled[:,-2*ny:-1*ny,:],1) 
+            del gkmap; gkmap = sampled
+            gkmap = self.normalizer(gkmap)
+            def process_ml(input_imgs, batch_maker):
+                input_imgs = batch_maker(input_imgs)
+                nsample = input_imgs.shape[0]
+                output_imgs = np.zeros((nsample, 5, ny, nx))
+                ctr = 0
+                nitr = int(np.ceil(input_imgs.shape[0]/ self.nbatch))
+                for batch in np.array_split(np.arange(input_imgs.shape[0]), nitr):
+                    input_tensor = torch.autograd.Variable(self.Tensor(input_imgs[batch].copy()))
+                    ret = self.pixgan_generator(input_tensor).detach()
+                    ret = torch.cat((input_tensor, ret), 1)
+                    ret = self.forse_generator(ret).detach()
+                    output_imgs[batch] = ret.data.to(device="cpu").numpy() 
+                    if verbose and ctr%20 == 0: 
+                        print(f"batch {ctr}/{nitr} completed")
+                    ctr += 1
+                return output_imgs
 
-        del gkmap; gkmap = sampled
-        gkmap = self.normalizer(gkmap)
-        def process_ml(input_imgs, batch_maker):
-            input_imgs = batch_maker(input_imgs)
-            nsample = input_imgs.shape[0]
-            output_imgs = np.zeros((nsample, 5, ny, nx))
-            ctr = 0
-            nitr = int(np.ceil(input_imgs.shape[0]/ self.nbatch))
-            for batch in np.array_split(np.arange(input_imgs.shape[0]), nitr):
-                input_tensor = torch.autograd.Variable(self.Tensor(input_imgs[batch].copy()))
-                ret = self.pixgan_generator(input_tensor).detach()
-                ret = torch.cat((input_tensor, ret), 1)
-                ret = self.forse_generator(ret).detach()
-                output_imgs[batch] = ret.data.to(device="cpu").numpy() 
-                if verbose and ctr%20 == 0: 
-                    print(f"batch {ctr}/{nitr} completed")
-                ctr += 1
-            return output_imgs
+            def post_process(output_imgs,  unbatch_maker):
+                output_imgs = unbatch_maker(output_imgs)
+                output_imgs = output_imgs[0,...]
+                return output_imgs
 
-        def post_process(output_imgs,  unbatch_maker):
-            output_imgs = unbatch_maker(output_imgs)
-            output_imgs = output_imgs[0,...]
-            return output_imgs
+            if verbose: print("make the primary images")
+            batch_maker = transforms.Batch((nch, ny, nx)) 
+            unbatch_maker = transforms.UnBatch((nch, Ny_pad, Nx_pad))
+            
+            processed = process_ml(gkmap, batch_maker); del gkmap
+            processed = post_process(processed, unbatch_maker)
+           
+            for post_process in post_processes:
+                processed = post_process(processed) 
 
-        if verbose: print("make the primary images")
-        batch_maker = transforms.Batch((nch, ny, nx)) 
-        unbatch_maker = transforms.UnBatch((nch, Ny_pad, Nx_pad))
-        
-        processed = process_ml(gkmap, batch_maker); del gkmap
-        processed = post_process(processed, unbatch_maker)
-       
-        for post_process in post_processes:
-            processed = post_process(processed) 
+            processed = self.unnormalizer(processed) 
+        else:
+            processed = test
 
-        processed = self.unnormalizer(processed) 
+        loc = np.where(processed[3:5] < 0)
+        processed[3:5][loc] = 0.; del loc
+        pixarea = (0.5*utils.arcmin)**2
+        thermo2mjy = 1/jysr2thermo(148)*pixarea*1e3
+        #processed[3] *= thermo2mjy
+        #processed[3] *= 1.18
+        #processed[4] *= 1.1
+        #loc = np.where(processed[3]>2)
+        #processed[3][loc] = processed[3][loc]**0.75; del loc 
+        #loc = np.where(processed[3] > 7)
+        #processed[3][loc] = 0.; del loc
+        #processed[3] /= thermo2mjy
+        '''
         for i in range(3,5):
             loc = np.where(processed[i] < 0)
             processed[i][loc] = 0.; del loc
+        '''
         reprojected = np.zeros((5,Ny,Nx), dtype=np.float32)
         for compt_idx in range(0,5):
             if verbose: print(f"reprojecting images {compt_idx}")
-            method = "interp" if compt_idx < 5 else "nearest"
+            method = "interp" if compt_idx < 4 else "nearest"
             global _get_reprojected
             def _get_reprojected(batch_idxes, method=method):
                 retysidx = batch_idxes[0]*(ny-taper_width)
@@ -950,15 +967,15 @@ class SehgalNetworkFullSky(object):
                             yocidx = ycidx+yoffset
                             yvals = processed[compt_idx,yocidx,xosidx:xoeidx]
                             xvals = xgrid[yocidx,xosidx:xoeidx]
+
                             
                             xmin = int(np.ceil(xvals[0]))
                             xmax = int(np.floor(xvals[-1]))
                             xin = np.arange(xmin,xmax+1)
                             xin = np.arange(xmin,xmax+1)[:Nx]
-                             
+                            spread_fact = ny/max(xmax-xmin,ny) if compt_idx > 5 else 1.
                             if method == "nearest":
                                 xin = np.round(xvals).astype(np.int)
-                                spread_fact = ny/max(xmax-xmin,ny)
                                 yvals = yvals*taper[j,:]*spread_fact
                                 #yvals = yvals*spread_fact
                                 #ret[yrcidx,xin%Nx] += yvals
@@ -978,8 +995,8 @@ class SehgalNetworkFullSky(object):
             del storage, _get_reprojected
         ## weight correction for diffused
 
-        reprojected[:5] = reprojected[:5]/self._get_weight()[0] 
-        #reprojected[3:5] = reprojected[3:5]/self._get_weight()[1]
+        reprojected[:4] = reprojected[:4]/self._get_weight()[0] 
+        reprojected[4] = reprojected[4]/self._get_weight()[1]
         return reprojected
 
         ## process point sources

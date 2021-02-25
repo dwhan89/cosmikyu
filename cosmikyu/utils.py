@@ -104,6 +104,17 @@ def get_gaussian_beam(l, beam_fwhm):
     sigma     = beam_fwhm/(2.*np.sqrt(2.*np.log(2)))
     f_ell = np.exp(-(l)**2.*sigma**2./2)
     return l, f_ell
-    
 
 
+def car2hp_coords(pos):
+    ret = np.zeros(pos.shape)
+    ret[:, 0] = pos[:, 0] + np.pi / 2.
+    ret[:, 1] = pos[:, 1] + np.pi
+    return ret
+
+
+def hp2car_coords(pos):
+    ret = np.zeros(pos.shape)
+    ret[:, 0] = pos[:, 0] - np.pi / 2.
+    ret[:, 1] = pos[:, 1] - np.pi
+    return ret

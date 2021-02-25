@@ -373,7 +373,9 @@ class SehgalNetwork(object):
         if conv_beam: alm = hp.almxfl(alm, self._get_beam()[1])
         return curvedsky.alm2map(alm, self.template.copy())[np.newaxis, ...]
 
-    def generate_samples(self, seed=None, ret_corr=False, wrap=True, verbose=True, input_kappa=None, transfer=True, post_processes=[], use_cache=True, flux_cut=10):
+    def generate_samples(self, seed=None, ret_corr=False, wrap=True, wrap_mode=("reflect","wrap"), edge_blend=True,
+                         verbose=True, input_kappa=None, transfer=True, deconv_beam=False, use_sht=True,
+                         post_processes=[], use_cache=True, flux_cut=10):
         if input_kappa is None:
             if verbose: print("making input gaussian kappa")
             
@@ -484,7 +486,7 @@ class SehgalNetwork(object):
         fft_taper_width = 20000#int(modlmap.max())-self.lmax
         l, f_taper = fft_taper(self.lmax, taper_width=fft_taper_width, order=10)
         f_transf = f_taper 
-        if deconv_beam: 
+        if deconv_beam:
             if verbose: print("deconvolving beam")
             l, f_beam = self._get_beam(ell=l)
             f_beam[-1*fft_taper_width:] = f_beam[-1*fft_taper_width-1]
@@ -832,7 +834,7 @@ class SehgalNetworkFullSky(object):
         alm = curvedsky.rand_alm(clkk)
         return curvedsky.alm2map(alm, self.template.copy())[np.newaxis, ...]
 
-    def generate_samples(self, seed=None, verbose=True, input_kappa=None, transfer=True,  post_processes=[], use_cache=True, flux_cut=7, polfix=True, test=None):
+    def generate_samples(self, seed=None, verbose=True, input_kappa=None, transfer=True,  post_processes=[], use_cache=True, flux_cut=7, polfix=True):
         if input_kappa is None:
             if verbose: print("making input gaussian kappa")
             gkmap = self._generate_input_kappa(seed=seed)
@@ -875,56 +877,53 @@ class SehgalNetworkFullSky(object):
 
                     ret[yrcidx,:] = fit(xval)
             return ret
-        if test is None:
-            with Pool(len(batch_idxes)) as p:
-                sampled = p.map(_get_sampled, batch_idxes)
-            sampled = np.vstack(sampled) 
-            sampled = sampled[np.newaxis,...]
-            if verbose: print("end sampling")
-            del _get_sampled, xin
-            
-            if polfix:
-                if verbose: print("pol fix") 
-                sampled[:,:1*ny,:] = np.flip(sampled[:,1*ny:2*ny,:],1)
-                sampled[:,-1*ny:,:] = np.flip(sampled[:,-2*ny:-1*ny,:],1) 
+        with Pool(len(batch_idxes)) as p:
+            sampled = p.map(_get_sampled, batch_idxes)
+        sampled = np.vstack(sampled)
+        sampled = sampled[np.newaxis,...]
+        if verbose: print("end sampling")
+        del _get_sampled, xin
 
-            del gkmap; gkmap = sampled
-            gkmap = self.normalizer(gkmap)
-            def process_ml(input_imgs, batch_maker):
-                input_imgs = batch_maker(input_imgs)
-                nsample = input_imgs.shape[0]
-                output_imgs = np.zeros((nsample, 5, ny, nx))
-                ctr = 0
-                nitr = int(np.ceil(input_imgs.shape[0]/ self.nbatch))
-                for batch in np.array_split(np.arange(input_imgs.shape[0]), nitr):
-                    input_tensor = torch.autograd.Variable(self.Tensor(input_imgs[batch].copy()))
-                    ret = self.pixgan_generator(input_tensor).detach()
-                    ret = torch.cat((input_tensor, ret), 1)
-                    ret = self.forse_generator(ret).detach()
-                    output_imgs[batch] = ret.data.to(device="cpu").numpy() 
-                    if verbose and ctr%20 == 0: 
-                        print(f"batch {ctr}/{nitr} completed")
-                    ctr += 1
-                return output_imgs
+        if polfix:
+            if verbose: print("pol fix")
+            sampled[:,:1*ny,:] = np.flip(sampled[:,1*ny:2*ny,:],1)
+            sampled[:,-1*ny:,:] = np.flip(sampled[:,-2*ny:-1*ny,:],1)
 
-            def post_process(output_imgs,  unbatch_maker):
-                output_imgs = unbatch_maker(output_imgs)
-                output_imgs = output_imgs[0,...]
-                return output_imgs
+        del gkmap; gkmap = sampled
+        gkmap = self.normalizer(gkmap)
+        def process_ml(input_imgs, batch_maker):
+            input_imgs = batch_maker(input_imgs)
+            nsample = input_imgs.shape[0]
+            output_imgs = np.zeros((nsample, 5, ny, nx))
+            ctr = 0
+            nitr = int(np.ceil(input_imgs.shape[0]/ self.nbatch))
+            for batch in np.array_split(np.arange(input_imgs.shape[0]), nitr):
+                input_tensor = torch.autograd.Variable(self.Tensor(input_imgs[batch].copy()))
+                ret = self.pixgan_generator(input_tensor).detach()
+                ret = torch.cat((input_tensor, ret), 1)
+                ret = self.forse_generator(ret).detach()
+                output_imgs[batch] = ret.data.to(device="cpu").numpy()
+                if verbose and ctr%20 == 0:
+                    print(f"batch {ctr}/{nitr} completed")
+                ctr += 1
+            return output_imgs
 
-            if verbose: print("make the primary images")
-            batch_maker = transforms.Batch((nch, ny, nx)) 
-            unbatch_maker = transforms.UnBatch((nch, Ny_pad, Nx_pad))
-            
-            processed = process_ml(gkmap, batch_maker); del gkmap
-            processed = post_process(processed, unbatch_maker)
-           
-            for post_process in post_processes:
-                processed = post_process(processed) 
+        def post_process(output_imgs,  unbatch_maker):
+            output_imgs = unbatch_maker(output_imgs)
+            output_imgs = output_imgs[0,...]
+            return output_imgs
 
-            processed = self.unnormalizer(processed) 
-        else:
-            processed = test
+        if verbose: print("make the primary images")
+        batch_maker = transforms.Batch((nch, ny, nx))
+        unbatch_maker = transforms.UnBatch((nch, Ny_pad, Nx_pad))
+
+        processed = process_ml(gkmap, batch_maker); del gkmap
+        processed = post_process(processed, unbatch_maker)
+
+        for post_process in post_processes:
+            processed = post_process(processed)
+
+        processed = self.unnormalizer(processed)
 
         loc = np.where(processed[3:5] < 0)
         processed[3:5][loc] = 0.; del loc

@@ -606,7 +606,7 @@ class SehgalNetworkFullSky(object):
         reprojected = np.zeros((5, Ny, Nx), dtype=np.float32)
         for compt_idx in range(0, 5):
             if verbose: print(f"reprojecting images {compt_idx}")
-            method = "interp" if compt_idx < 4 else "nearest"
+            method = "interp" if compt_idx < 3 else "nearest"
             global _get_reprojected
 
             def _get_reprojected(batch_idxes, method=method):
@@ -650,8 +650,8 @@ class SehgalNetworkFullSky(object):
         gc.collect()
         ## weight correction for diffused
 
-        reprojected[:4] = reprojected[:4] / self._get_weight()[0]
-        reprojected[4] = reprojected[4] / self._get_weight()[1]
+        reprojected[:3] = reprojected[:3] / self._get_weight()[0]
+        reprojected[3:5] = reprojected[3:5] / self._get_weight()[1]
         return reprojected
 
         ## process point sources

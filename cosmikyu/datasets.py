@@ -30,7 +30,6 @@ class SehgalDataSet(Dataset):
         self.dtype = dtype
         self.subset = subset
 
-
     def get_stat(self):
         return self.lmdb_env.stat()
 
@@ -39,7 +38,7 @@ class SehgalDataSet(Dataset):
         return len(self.subset) if self.subset is not None and len(self.subset) < nentries else nentries
 
     def __getitem__(self, idx):
-        cidx = self.subset[idx]  if self.subset is not None else idx
+        cidx = self.subset[idx] if self.subset is not None else idx
         str_idx = '{:08}'.format(cidx)
         with self.lmdb_env.begin() as txn:
             data = np.frombuffer(txn.get(str_idx.encode('ascii')), dtype=self.dtype).reshape(self.shape).copy()
@@ -53,7 +52,7 @@ class DataSetJoiner(Dataset):
         assert (len(datasets) > 0)
         self.nsample = len(datasets[0])
         for db in datasets:
-            assert(self.nsample ==  len(db))
+            assert (self.nsample == len(db))
         print("Number of joined samples are {}".format(self.nsample))
         self.datasets = datasets
         self.dtype = dtype

@@ -1,17 +1,16 @@
+import gc
 import os
+from multiprocessing import Pool
 
 import healpy as hp
 import numpy as np
 import scipy.interpolate
 import torch
 from orphics import maps as omaps
-from pixell import enmap, utils, curvedsky
-from . import transforms, nn as cnn, model, stats
-from multiprocessing import Pool
-import gc
-import pandas as pd
 from past.utils import old_div
+from pixell import enmap, utils, curvedsky
 
+from . import transforms, nn as cnn, model
 from .utils import car2hp_coords, hp2car_coords, load_data
 
 DEFAULT_TCMB = 2.726
@@ -298,7 +297,6 @@ class SehgalNetworkFullSky(object):
         self.taper_width = taper_width
         self.compts = ["kappa", "ksz", "tsz", "ir", "rad"]
 
-
         Ny, Nx = self.shape
         ny, nx = self.stamp_shape[-2:]
         num_ybatch = int(np.ceil((Ny - self.taper_width) / (ny - self.taper_width)))
@@ -339,8 +337,8 @@ class SehgalNetworkFullSky(object):
 
         ## transfer
         self.transf_1dspec = np.load(transfer_1dspec_file)
-        self.transf_2dspec = load_data(transfer_2dspec_file)        
-        
+        self.transf_2dspec = load_data(transfer_2dspec_file)
+
         LF = cnn.LinearFeature(4, 4)
         nconv_layer_gen = 4
         nthresh_layer_gen = 3
@@ -381,6 +379,7 @@ class SehgalNetworkFullSky(object):
 
         self.taper = None
         self.jysr2thermo = None
+
     def _get_xgrid(self):
         if self.xgrid is None:
             if self.xgrid_file is not None:
@@ -388,7 +387,6 @@ class SehgalNetworkFullSky(object):
             else:
                 self._generate_grid_info()
         return self.xgrid
-
 
     def _get_xscales(self):
         if self.xscales is None:
@@ -430,8 +428,6 @@ class SehgalNetworkFullSky(object):
                     xgrid[yocidx, xosidx:xoeidx] = xgrid_vald
 
         self.xgrid = xgrid.astype(np.float32)
-
-
 
     def _get_taper(self):
         if self.taper is None:
@@ -509,14 +505,13 @@ class SehgalNetworkFullSky(object):
         return curvedsky.alm2map(alm, self.template.copy())[np.newaxis, ...]
 
     def _get_jysr2thermo(self, mode="car"):
-        assert(mode == "car")
+        assert (mode == "car")
         if self.jysr2thermo is None:
-            pixsizemap = enmap.pixsizemap(self.shape,self.wcs)
-            self.jysr2thermo = (1e-3*jysr2thermo(148)/pixsizemap); del pixsizemap
+            pixsizemap = enmap.pixsizemap(self.shape, self.wcs)
+            self.jysr2thermo = (1e-3 * jysr2thermo(148) / pixsizemap);
+            del pixsizemap
             self.jysr2thermo = self.jysr2thermo.astype(np.float32)
-        return self.jysr2thermo 
-
-
+        return self.jysr2thermo
 
     def generate_samples(self, seed=None, verbose=True, input_kappa=None, transfer=True, post_processes=[],
                          use_cache=True, flux_cut=7, polfix=True):
@@ -609,7 +604,7 @@ class SehgalNetworkFullSky(object):
         processed = process_ml(gaussian_kappa, batch_maker);
         del gaussian_kappa
         processed = post_process(processed, unbatch_maker)
-        del batch_maker, unbatch_maker 
+        del batch_maker, unbatch_maker
         torch.cuda.empty_cache()
         gc.collect()
 
@@ -674,18 +669,20 @@ class SehgalNetworkFullSky(object):
             if verbose: print(f"applying the transfer functions to {compt_idx}")
             xtransf = self.transf_2dspec[compt_idx]['px']
             ytransf = self.transf_2dspec[compt_idx]['py']
-            kmap[j] = kmap[j]*np.outer(ytransf,xtransf)
+            kmap[j] = kmap[j] * np.outer(ytransf, xtransf)
             reprojected[j] = enmap.ifft(kmap[j]).real
             alm = curvedsky.map2alm(reprojected[j].astype(np.float64), lmax=10000)
             alm = hp.almxfl(alm, self.transf_1dspec[compt_idx])
             reprojected[j] = curvedsky.alm2map(alm, reprojected[j])
         del kmap
 
-        reprojected[3:5] *= 1.1/self._get_jysr2thermo(mode="car")
-        loc = np.where(reprojected[3]>1)
-        reprojected[3][loc] = reprojected[3][loc]**0.63; del loc 
-        loc =np.where(reprojected[3:5]>7)
-        reprojected[3:5][loc] = 0.; del loc
+        reprojected[3:5] *= 1.1 / self._get_jysr2thermo(mode="car")
+        loc = np.where(reprojected[3] > 1)
+        reprojected[3][loc] = reprojected[3][loc] ** 0.63;
+        del loc
+        loc = np.where(reprojected[3:5] > 7)
+        reprojected[3:5][loc] = 0.;
+        del loc
         reprojected[3:5] *= self._get_jysr2thermo(mode="car")
         gc.collect()
         return reprojected.astype(np.float32)

@@ -155,7 +155,7 @@ Contributions are what make the open source community such an amazing place to b
 <!-- LICENSE -->
 ## License
 
-Distributed under the MIT License. See `LICENSE` for more information.
+Distributed under the APATCH-2.0 License. See `LICENSE` for more information.
 
 
 

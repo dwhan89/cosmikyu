@@ -12,7 +12,7 @@ import gc
 import pandas as pd
 from past.utils import old_div
 
-from .utils import car2hp_coords, hp2car_coords
+from .utils import car2hp_coords, hp2car_coords, load_data
 
 DEFAULT_TCMB = 2.726
 H_CGS = 6.62608e-27
@@ -287,7 +287,7 @@ class Sehgal10ReprojectedFromCat(Sehgal10Reprojected):
 
 class SehgalNetworkFullSky(object):
     def __init__(self, cuda, ngpu, nbatch, norm_info_file, pixgan_state_file, tuner_state_file,
-                 clkk_spec_file, transfer_file, taper_width, nprocess=1, xgrid_file=None,
+                 clkk_spec_file, transfer_1dspec_file, transfer_2dspec_file, taper_width, nprocess=1, xgrid_file=None,
                  weight_file=None, cache_dir=None):
         ## fixed full sky geometry
         self.shape = (21600, 43200)
@@ -296,6 +296,8 @@ class SehgalNetworkFullSky(object):
         self.stamp_shape = (5, 128, 128)
         self.nbatch = nbatch
         self.taper_width = taper_width
+        self.compts = ["kappa", "ksz", "tsz", "ir", "rad"]
+
 
         Ny, Nx = self.shape
         ny, nx = self.stamp_shape[-2:]
@@ -336,8 +338,9 @@ class SehgalNetworkFullSky(object):
         self.clkk_spec = np.load(clkk_spec_file)
 
         ## transfer
-        if transfer_file:
-            self.transfer_func = np.load(transfer_file)
+        self.transf_1dspec = np.load(transfer_1dspec_file)
+        self.transf_2dspec = load_data(transfer_2dspec_file)        
+        
         LF = cnn.LinearFeature(4, 4)
         nconv_layer_gen = 4
         nthresh_layer_gen = 3
@@ -377,7 +380,7 @@ class SehgalNetworkFullSky(object):
         self.weight = None
 
         self.taper = None
-
+        self.jysr2thermo = None
     def _get_xgrid(self):
         if self.xgrid is None:
             if self.xgrid_file is not None:
@@ -505,6 +508,16 @@ class SehgalNetworkFullSky(object):
         alm = curvedsky.rand_alm(clkk)
         return curvedsky.alm2map(alm, self.template.copy())[np.newaxis, ...]
 
+    def _get_jysr2thermo(self, mode="car"):
+        assert(mode == "car")
+        if self.jysr2thermo is None:
+            pixsizemap = enmap.pixsizemap(self.shape,self.wcs)
+            self.jysr2thermo = (1e-3*jysr2thermo(148)/pixsizemap); del pixsizemap
+            self.jysr2thermo = self.jysr2thermo.astype(np.float32)
+        return self.jysr2thermo 
+
+
+
     def generate_samples(self, seed=None, verbose=True, input_kappa=None, transfer=True, post_processes=[],
                          use_cache=True, flux_cut=7, polfix=True):
         if input_kappa is None:
@@ -596,7 +609,8 @@ class SehgalNetworkFullSky(object):
         processed = process_ml(gaussian_kappa, batch_maker);
         del gaussian_kappa
         processed = post_process(processed, unbatch_maker)
-        del batch_maker, unbatch_maker
+        del batch_maker, unbatch_maker 
+        torch.cuda.empty_cache()
         gc.collect()
 
         for post_process in post_processes:
@@ -648,243 +662,30 @@ class SehgalNetworkFullSky(object):
                 reprojected[compt_idx, idxes[0]:idxes[1], :] += ring
             del storage, _get_reprojected
         gc.collect()
-        ## weight correction for diffused
 
+        ## weight correction for diff
         reprojected[:3] = reprojected[:3] / self._get_weight()[0]
         reprojected[3:5] = reprojected[3:5] / self._get_weight()[1]
-        return reprojected
+        reprojected = enmap.enmap(reprojected.astype(np.float32), wcs=self.wcs)
 
-        ## process point sources
-        jysr2uk = jysr2thermo(148)
-        decs, _ = enmap.posaxes((Ny, Nx), wcs)
-        ptbatchy = nbatchy + 1
+        ## apply transfer functions
+        kmap = enmap.fft(reprojected[:3])
+        for j, compt_idx in enumerate(self.compts[:3]):
+            if verbose: print(f"applying the transfer functions to {compt_idx}")
+            xtransf = self.transf_2dspec[compt_idx]['px']
+            ytransf = self.transf_2dspec[compt_idx]['py']
+            kmap[j] = kmap[j]*np.outer(ytransf,xtransf)
+            reprojected[j] = enmap.ifft(kmap[j]).real
+            alm = curvedsky.map2alm(reprojected[j].astype(np.float64), lmax=10000)
+            alm = hp.almxfl(alm, self.transf_1dspec[compt_idx])
+            reprojected[j] = curvedsky.alm2map(alm, reprojected[j])
+        del kmap
 
-        ptbatch_idxes = np.array_split(np.arange(ptbatchy), min(ptbatchy, self.nprocess))
-        mlsims_pts = processed[3:, ...].copy();
-        del processed
-        mlsims_catalogs = {}
-        for i, compt_idx in enumerate(["ir", "rad"]):
-            if verbose:
-                print(f"making pt source cats {compt_idx}")
-            gc.collect()
-            global _make_catalog
-
-            def _make_catalog(batch_idxes, compt_idx=i):
-                yosidx = batch_idxes[0] * int(ny) - int(0.5 * ny)
-                yoeidx = (batch_idxes[-1] + 1) * int(ny) - int(0.5 * ny)
-                yosidx = max(yosidx, 0)
-
-                loc = np.where(mlsims_pts[compt_idx, yosidx:yoeidx] >= 0)
-                cat = np.zeros((len(loc[0]), 3))
-                yoidxes = (loc[0].copy() + yosidx)
-                a = yoidxes // ny
-                b = yoidxes % ny
-
-                cat[:, 0] = a * (ny - taper_width) + b;
-                del a, b
-                cat[:, 1] = xgrid[yosidx:yoeidx][loc].copy()
-                cat[:, 1] %= Nx
-                cat[:, 2] = mlsims_pts[compt_idx, yosidx:yoeidx][loc].copy()
-                cat[:, 2] *= (1 / jysr2uk * 1e3 * (0.5 * utils.arcmin) ** 2)
-
-                del loc
-                if cat[-1, 0] >= Ny:
-                    rloc = np.where(cat[:, 0] < Ny)
-                    cat = cat[rloc[0], :];
-                    del rloc
-
-                cat = pd.DataFrame(cat, columns=['dec', 'ra', 'I'])
-                cat = cat.sort_values(['dec', 'ra'], ascending=[True, True])
-                cat.reset_index(drop=True, inplace=True)
-                pddec_idxes = cat.groupby("dec").indices
-
-                merged = []
-                for i, dec_idx in enumerate(pddec_idxes):
-                    dec = decs[int(dec_idx)]
-                    scale = (0.5 * utils.arcmin) / max(np.cos(dec), (0.5 * utils.arcmin) / (2 * np.pi))
-                    nsegment = int(np.round((np.ceil(2 * np.pi / scale))))
-                    cat_sub = cat.iloc[pddec_idxes[dec_idx]].to_numpy()
-
-                    RB = stats.FastBINNER(0, Nx, nsegment)
-                    _, ra_bincount = RB.bin(cat_sub[:, 1])
-                    ra_bincount = np.int64(ra_bincount)
-
-                    delta_ra = Nx // nsegment
-                    ras_resd = Nx % nsegment
-                    shift_idxes = sorted(np.random.choice(nsegment, size=ras_resd, replace=False))
-                    shifts = np.zeros(nsegment, dtype=np.int)
-                    shifts[shift_idxes] = +1
-                    ras = np.arange(nsegment) * delta_ra
-                    ras += np.random.randint(delta_ra, size=nsegment)
-                    ras += np.cumsum(shifts)
-
-                    del delta_ra, ras_resd, shifts, RB
-
-                    ctr = 0
-                    reduced = []
-                    for j in range(nsegment):
-                        ccount = ra_bincount[j]
-                        if ccount == 0:
-                            continue
-
-                        row = np.zeros(3)
-                        row[1] = ras[j]
-                        if ccount == 1:
-                            row[2] = cat_sub[ctr, 2]
-                        else:
-                            row[2] = np.random.choice(cat_sub[ctr:ctr + ccount, 2], 1)
-                        if row[2] != 0:
-                            reduced.append(row)
-                        ctr += ccount
-                    cat_sub = np.array(reduced).reshape((len(reduced), 3))
-                    cat_sub[:, 0] = dec_idx
-                    del ra_bincount, reduced, ras
-
-                    merged.append(cat_sub)
-                del cat
-                merged = np.vstack(merged)
-
-                ## flux correction
-                merged[:, 2] *= 1.1
-
-                if compt_idx == 0:
-                    loc = np.where(merged[:, 2] > 1)
-                    merged[loc[0], 2] = merged[loc[0], 2] ** 0.55
-                    del loc
-
-                if flux_cut is not None:
-                    loc = np.where(merged[:, 2] <= flux_cut)
-                    merged = merged[loc[0], ...]
-                    del loc
-
-                return np.float32(merged)
-
-            with Pool(len(batch_idxes)) as p:
-                storage = p.map(_make_catalog, ptbatch_idxes)
-            del _make_catalog
-            mlsims_catalogs[compt_idx] = np.vstack(storage)
-
-        del decs, ptbatch_idxes,
-        ## catalog to map 
+        reprojected[3:5] *= 1.1/self._get_jysr2thermo(mode="car")
+        loc = np.where(reprojected[3]>1)
+        reprojected[3][loc] = reprojected[3][loc]**0.63; del loc 
+        loc =np.where(reprojected[3:5]>7)
+        reprojected[3:5][loc] = 0.; del loc
+        reprojected[3:5] *= self._get_jysr2thermo(mode="car")
         gc.collect()
-        pixsizemap = enmap.pixsizemap((Ny, Nx), wcs)
-        conv = ((1e-3 * jysr2thermo(148)) / pixsizemap);
-        del pixsizemap
-        for i, compt_idx in enumerate(["ir", "rad"]):
-            cat = mlsims_catalogs[compt_idx]
-            reprojected[([i + 3], np.int64(cat[:, 0]), np.int64(cat[:, 1]))] = cat[:, 2]
-            reprojected[i + 3] = reprojected[i + 3] * conv
-
-        # del mlsims_catalogs
-
-        return reprojected  # , mlsims_catalogs
-
-        alms = None
-
-        def fft_taper(lcrit, taper_width=10000, order=5):
-            ell = np.arange(lcrit + taper_width + 1)
-            f = np.ones(len(ell))
-            f[lcrit:lcrit + taper_width + 1] = np.cos(np.linspace(0, np.pi / 2, taper_width + 1)) ** order
-            f[-1] = 0
-            return ell, f
-
-        fft_taper_width = 20000  # int(modlmap.max())-self.lmax
-        l, f_taper = fft_taper(self.lmax, taper_width=fft_taper_width, order=10)
-        f_transf = f_taper
-        if deconv_beam:
-            if verbose: print("deconvolving beam")
-            l, f_beam = self._get_beam(ell=l)
-            f_beam[-1 * fft_taper_width:] = f_beam[-1 * fft_taper_width - 1]
-            f_beam = 1 / f_beam
-            f_transf = f_transf * f_beam
-        f_transfs = [None] * 5
-        for i in range(5):
-            f_transfs[i] = f_transf.copy()
-
-        if transfer:
-            if verbose: print("applying trasfer function")
-            for i in range(5):
-                f_transfs[i][:self.lmax + 1] = f_transfs[i][:self.lmax + 1] * self.transfer_func[:self.lmax + 1, i + 1]
-
-        def _load_combined_tf_funcs(ell, use_cache, cache_dir):
-            lmax = int(np.ceil(np.max(ell)))
-            target_file = os.path.join(cache_dir,
-                                       f"tf_beam_{str(deconv_beam)}_transfer_{str(transfer)}_lmax_{lmax}_sht_{str(use_sht)}.npy")
-            if os.path.exists(target_file) and use_cache:
-                storage = np.load(target_file)
-                print(f"loading {target_file}")
-            else:
-                interp_funcs = _gen_interp_funcs()
-                storage = np.zeros((len(ell), 6))
-                storage[:, 0] = ell.copy()
-                for i in range(5):
-                    storage[:, i + 1] = interp_funcs[i](ell)
-                if use_cache:
-                    np.save(target_file, storage)
-                    print(f"saving {target_file}")
-            return storage
-
-        def _gen_interp_funcs():
-            interp_funcs = [None] * 5
-            for i in range(5):
-                interp_funcs[i] = scipy.interpolate.interp1d(l, f_transfs[i], bounds_error=False,
-                                                             fill_value=(f_transfs[i][0], f_transfs[i][-1]))
-            return interp_funcs
-
-        torch.cuda.empty_cache()
-
-        if deconv_beam or transfer:
-            taper = omaps.cosine_window(Ny, Nx, 20, 20)
-            minval = np.min(taper[taper != 0])
-            taper[taper == 0] = minval
-            if use_sht:
-                raise NotImplemented()
-                l_intp = np.arange(self.lmax + 1)
-                f_int = interp_func(l_intp)
-                alms = curvedsky.map2alm(output_imgs, lmax=self.lmax, spin=0)
-                for i in range(4):
-                    alms[i] = hp.almxfl(alms[i], f_int)
-                output_imgs = curvedsky.alm2map(alms, ret, spin=0)
-                del alms
-            else:
-                maxidx = 3
-                ftmap = enmap.fft(output_imgs[:maxidx, ...])
-                modlmap = enmap.modlmap((Ny, Nx), wcs).ravel()
-                combined_tfs = _load_combined_tf_funcs(modlmap, use_cache, self.cache_dir)
-                for i in range(maxidx):
-                    ftmap[i] = ftmap[i] * np.reshape(combined_tfs[:, i + 1], (Ny, Nx))
-                del modlmap
-                output_imgs[:maxidx, ...] = enmap.ifft(ftmap).real;
-                del ftmap
-        if transfer:
-            conv = enmap.pixsizemap(self.shape, self.wcs) / jysr2thermo(148) * 1e3
-
-            output_imgs[3] *= 1.1
-
-            target = output_imgs[3] * conv
-            lowflux = target.copy()
-            cut = 1
-            loc = np.where(lowflux > cut)
-            lowflux[loc] = 0.
-            highflux = target - lowflux
-            highflux = highflux ** 0.61
-            # loc = np.where(highflux<cut)
-            # highflux[loc] = 0
-            target = lowflux + highflux
-            output_imgs[3] = target / conv
-            del lowflux, highflux
-            output_imgs[4] *= 1.6284
-
-        if flux_cut is not None:
-            flux_map = flux_cut / enmap.pixsizemap(self.shape, self.wcs)
-            flux_map *= 1e-3 * jysr2thermo(148)
-            for i in range(3, 5):
-                loc = np.where(output_imgs[i] > flux_map)
-                output_imgs[i][loc] = 0.
-            del flux_cut
-
-        for i in range(3, 5):
-            loc = np.where(output_imgs[i] < 0)
-            output_imgs[i][loc] = 0.
-
-        return output_imgs if not ret_corr else (output_imgs, corr)
+        return reprojected.astype(np.float32)

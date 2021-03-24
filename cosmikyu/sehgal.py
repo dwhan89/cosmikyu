@@ -612,6 +612,8 @@ class SehgalNetworkFullSky(object):
             processed = post_process(processed)
         processed = self.unnormalizer(processed)
 
+        loc = np.where(processed[3:5]<0)
+        processed[3:5][loc] = 0.
         reprojected = np.zeros((5, Ny, Nx), dtype=np.float32)
         for compt_idx in range(0, 5):
             if verbose: print(f"reprojecting images {compt_idx}")
@@ -676,13 +678,19 @@ class SehgalNetworkFullSky(object):
             reprojected[j] = curvedsky.alm2map(alm, reprojected[j])
         del kmap
 
-        reprojected[3:5] *= 1.1 / self._get_jysr2thermo(mode="car")
+        def boxcox(arr, lamb):
+            return ((arr+1)**lamb - 1)/lamb
+        
+        reprojected[3:5] *= 1 / self._get_jysr2thermo(mode="car")
+        reprojected[3] *= 1.1
         loc = np.where(reprojected[3] > 1)
-        reprojected[3][loc] = reprojected[3][loc] ** 0.63;
+        reprojected[3][loc] = reprojected[3][loc] ** 0.63; 
         del loc
+        reprojected[4] = boxcox(reprojected[4], 1.25)
         loc = np.where(reprojected[3:5] > 7)
         reprojected[3:5][loc] = 0.;
         del loc
         reprojected[3:5] *= self._get_jysr2thermo(mode="car")
         gc.collect()
+
         return reprojected.astype(np.float32)

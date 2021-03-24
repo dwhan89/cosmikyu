@@ -2,6 +2,12 @@
 .idea/
 *.swp
 *.pkl
+*.swo
+bin/archieves/
+notebooks/archives/
+data
+logs
+output
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

@@ -15,7 +15,6 @@ sample_interval = 200
 save_interval = 5
 batch_size = 32
 nepochs = 100
-#norm_info_file = "/home/dwhan89/workspace/cosmikyu/data/sehgal/281020_logzshrink_normalization_info_validation.npz"
 norm_info_file = "/home/dwhan89/workspace/cosmikyu/data/sehgal/281020_logzshrink_normalization_info_validation.npz"
 
 _, wcs = maps.rect_geometry(width_arcmin=64., px_res_arcmin=0.5)
@@ -42,7 +41,6 @@ PIXGAN = gan.PIXGAN("sehgal_pixgan_261020", shape, nconv_fcgen=64,
                           nconv_fcdis=64, cuda=cuda, ngpu=4, nconv_layer_gen=4, nconv_layer_disc=3, kernal_size=4, stride=2,
                           padding=1, output_padding=0, gen_act=STanh, nin_channel=1, nout_channel=4, nthresh_layer_gen=3, nthresh_layer_disc=2)
 
-#DCGAN_WGP.load_states(model_dir, "_{}".format(25))
 mlflow.set_experiment(PIXGAN.identifier)
 with mlflow.start_run(experiment_id=PIXGAN.experiment.experiment_id) as mlflow_run:
     torch.cuda.empty_cache()

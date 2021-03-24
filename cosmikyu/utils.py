@@ -20,6 +20,18 @@ def smooth(x, window_len=11, window='hanning'):
     return y
 
 
+def get_geometry(ra, dec, width, height, res=None, shape=None):
+    if shape is None:
+        nx = int(np.ceil(width / res))
+        ny = int(np.ceil(height / res))
+        shape = (ny, nx)
+    else:
+        pass
+    pos = [[-1. * height / 2. + dec, -1. * width / 2. + ra], [height / 2. + dec, width / 2. + ra]]
+    shape, wcs = enmap.geometry(pos=pos, shape=shape)
+    return shape, wcs, pos
+
+
 def cl2dl(cl):
     l = np.arange(len(cl))
     dl = cl * (l * (l + 1)) / (2 * np.pi)
@@ -87,3 +99,25 @@ def str2bool(v):
         return False
     else:
         raise TypeError("Can't convert 'str' object to 'boolean'")
+
+
+def get_gaussian_beam(l, beam_fwhm):
+    " return f"
+    beam_fwhm = np.deg2rad(beam_fwhm / 60.)
+    sigma = beam_fwhm / (2. * np.sqrt(2. * np.log(2)))
+    f_ell = np.exp(-(l) ** 2. * sigma ** 2. / 2)
+    return l, f_ell
+
+
+def car2hp_coords(pos):
+    ret = np.zeros(pos.shape)
+    ret[:, 0] = pos[:, 0] + np.pi / 2.
+    ret[:, 1] = pos[:, 1] + np.pi
+    return ret
+
+
+def hp2car_coords(pos):
+    ret = np.zeros(pos.shape)
+    ret[:, 0] = pos[:, 0] - np.pi / 2.
+    ret[:, 1] = pos[:, 1] - np.pi
+    return ret

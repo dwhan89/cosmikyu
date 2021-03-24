@@ -1,8 +1,10 @@
-from . import mpi, config, utils
-import numpy as np
 import os
+
+import numpy as np
 from fast_histogram import histogram1d
 from scipy.stats import chi2
+
+from . import mpi, utils
 
 
 class STATS(object):
@@ -226,11 +228,11 @@ class FastMultBinner(object):
             for i in range(nchannels):
                 self.binners[i] = FastBINNER(ranges[0], ranges[1], nbins)
 
-    def bin(self, arr, verbose=False):
+    def bin(self, arr, weights=None, verbose=False):
         assert (arr.shape[0] == self.nchannels)
         for i in range(self.nchannels):
             if verbose: print("binning {}".format(i))
-            self.binners[i].bin(arr[i])
+            self.binners[i].bin(arr[i], weights=weights)
 
     def get_info(self):
         ret = {}
@@ -260,6 +262,6 @@ class FastBINNER(object):
 
         assert (self.bin_sizes > 0).all()
 
-    def bin(self, arr):
-        self.storage += histogram1d(arr, self.nbin, [self.minval, self.maxval])
+    def bin(self, arr, weights=None):
+        self.storage += histogram1d(arr, self.nbin, [self.minval, self.maxval], weights=weights)
         return self.bin_center, self.storage

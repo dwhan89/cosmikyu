@@ -8,7 +8,7 @@ import scipy.interpolate
 import torch
 from orphics import maps as omaps
 from past.utils import old_div
-from pixell import enmap, utils, curvedsky
+from pixell import enmap, utils, curvedsky, powspec
 
 from . import transforms, nn as cnn, model
 from .utils import car2hp_coords, hp2car_coords, load_data
@@ -307,7 +307,7 @@ class Sehgal10ReprojectedFromCat(Sehgal10Reprojected):
 
 class SehgalNetworkFullSky(object):
     def __init__(self, cuda, ngpu, nbatch, norm_info_file, pixgan_state_file, tuner_state_file,
-                 clkk_spec_file, transfer_1dspec_file, transfer_2dspec_file, taper_width, nprocess=1, xgrid_file=None,
+                 clkk_spec_file, cmb_spec_file, transfer_1dspec_file, transfer_2dspec_file, taper_width, nprocess=1, xgrid_file=None,
                  weight_file=None, cache_dir=None):
         ## fixed full sky geometry
         self.shape = (21600, 43200)
@@ -355,6 +355,7 @@ class SehgalNetworkFullSky(object):
 
         ## prepare input specs
         self.clkk_spec = np.load(clkk_spec_file)
+        self.cmb_spec = powspec.read_camb_scalar(cmb_spec_file)
 
         ## transfer
         self.transf_1dspec = np.load(transfer_1dspec_file)

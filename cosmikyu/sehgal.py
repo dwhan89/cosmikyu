@@ -19,6 +19,27 @@ K_CGS = 1.3806488e-16
 C_light = 2.99792e+10
 
 
+class _SeedTracker(object):
+    def __init__(self):
+        self.CMB = 0
+        self.FG = 1
+        self.KAPPA = 2
+        self.freq_dict = {30, 90, 148, 219, 277, 350}
+
+    def get_cmb_seed(self, sim_idx):
+        return self.CMB, sim_idx
+
+    def get_fg_seed(self, sim_idx, freq_idx):
+        assert (freq_idx in self.freq_dict)
+        return self.FG, sim_idx, freq_idx
+
+    def get_kappa_seed(self, sim_idx):
+        return self.KAPPA, sim_idx
+
+
+seed_tracker = _SeedTracker()
+
+
 def fnu(nu, tcmb=DEFAULT_TCMB):
     """
     nu in GHz
@@ -332,7 +353,7 @@ class SehgalNetworkFullSky(object):
         output_padding = 0
         dropout_rate = 0
 
-        ## prepare input clkk
+        ## prepare input specs
         self.clkk_spec = np.load(clkk_spec_file)
 
         ## transfer
@@ -484,7 +505,7 @@ class SehgalNetworkFullSky(object):
                                         fit = scipy.interpolate.interp1d(xvals, yvals, assume_sorted=True)
                                     ret[yrcidx, xin % Nx] += fit(xin);
                                     del fit
-                        return ((retysidx, retyeidx), ret)
+                        return (retysidx, retyeidx), ret
 
                     with Pool(len(batch_idxes)) as p:
                         storage = p.map(_generate_weight_core, batch_idxes)
@@ -499,10 +520,16 @@ class SehgalNetworkFullSky(object):
         return self.weight
 
     def _generate_input_kappa(self, seed=None):
-        np.random.seed(seed)
+        if seed is not None:
+            np.random.seed(seed_tracker.get_kappa_seed(seed))
         clkk = self.clkk_spec[:, 1]
         alm = curvedsky.rand_alm(clkk)
         return curvedsky.alm2map(alm, self.template.copy())[np.newaxis, ...]
+
+    def generate_unlensed_cmb(self, seed=None):
+        if seed is not None:
+            np.random.seed(seed_tracker.get_cmb_seed(seed))
+
 
     def _get_jysr2thermo(self, mode="car"):
         assert (mode == "car")
@@ -612,7 +639,7 @@ class SehgalNetworkFullSky(object):
             processed = post_process(processed)
         processed = self.unnormalizer(processed)
 
-        loc = np.where(processed[3:5]<0)
+        loc = np.where(processed[3:5] < 0)
         processed[3:5][loc] = 0.
         reprojected = np.zeros((5, Ny, Nx), dtype=np.float32)
         for compt_idx in range(0, 5):
@@ -679,12 +706,12 @@ class SehgalNetworkFullSky(object):
         del kmap
 
         def boxcox(arr, lamb):
-            return ((arr+1)**lamb - 1)/lamb
-        
+            return ((arr + 1) ** lamb - 1) / lamb
+
         reprojected[3:5] *= 1 / self._get_jysr2thermo(mode="car")
         reprojected[3] *= 1.1
         loc = np.where(reprojected[3] > 1)
-        reprojected[3][loc] = reprojected[3][loc] ** 0.63; 
+        reprojected[3][loc] = reprojected[3][loc] ** 0.63;
         del loc
         reprojected[4] = boxcox(reprojected[4], 1.25)
         loc = np.where(reprojected[3:5] > 7)

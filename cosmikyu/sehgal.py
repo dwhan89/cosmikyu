@@ -308,7 +308,7 @@ class Sehgal10ReprojectedFromCat(Sehgal10Reprojected):
 class SehgalNetworkFullSky(object):
     def __init__(self, cuda, ngpu, nbatch, norm_info_file, pixgan_state_file, tuner_state_file,
                  clkk_spec_file, cmb_spec_file, transfer_1dspec_file, transfer_2dspec_file, taper_width, nprocess=1, xgrid_file=None,
-                 weight_file=None, cache_dir=None):
+                 weight_file=None, output_dir=None):
         ## fixed full sky geometry
         self.shape = (21600, 43200)
         _, self.wcs = enmap.fullsky_geometry(res=0.5 * utils.arcmin)
@@ -316,7 +316,7 @@ class SehgalNetworkFullSky(object):
         self.stamp_shape = (5, 128, 128)
         self.nbatch = nbatch
         self.taper_width = taper_width
-        self.compts = ["kappa", "ksz", "tsz", "ir", "rad"]
+        self.fg_compts = ["kappa", "ksz", "tsz", "ir_pts", "rad_pts"]
 
         Ny, Nx = self.shape
         ny, nx = self.stamp_shape[-2:]
@@ -328,9 +328,9 @@ class SehgalNetworkFullSky(object):
         self.shape_padded = (Ny_pad, Nx_pad)
 
         self.lmax = 10000
-        self.cache_dir = cache_dir
-        if self.cache_dir is None:
-            self.cache_dir = os.path.join(os.getcwd(), "cache")
+        self.output_dir = output_dir
+        if self.output_dir is None:
+            self.output_dir = os.path.join(os.getcwd(), "output")
 
         self.nprocess = nprocess
         self.cuda = cuda
@@ -520,7 +520,7 @@ class SehgalNetworkFullSky(object):
                 del loc
         return self.weight
 
-    def _generate_input_kappa(self, seed=None):
+    def _generate_gaussian_kappa(self, seed=None):
         if seed is not None:
             np.random.seed(seed_tracker.get_kappa_seed(seed))
         clkk = self.clkk_spec[:, 1]
@@ -541,19 +541,58 @@ class SehgalNetworkFullSky(object):
             self.jysr2thermo = self.jysr2thermo.astype(np.float32)
         return self.jysr2thermo
 
-    def generate_samples(self, seed=None, verbose=True, input_kappa=None, transfer=True, post_processes=[],
-                         use_cache=True, flux_cut=7, polfix=True):
+    def get_output_file_name(self, compt_idx, sim_idx, freq=None, polidx=None):
+        if compt_idx in ["tsz", "rad_pts", "ir_pts"]:
+            assert(freq in seed_tracker.freq_dict)
+            output_file = os.path.join(self.output_dir, f"{compt_idx}_{freq:03d}ghz_{sim_idx:05d}.fits")
+        elif compt_idx in ["kappa", "ksz"]:
+            output_file = os.path.join(self.output_dir, f"{compt_idx}_{sim_idx:05d}.fits")
+        elif compt_idx in ["lensed_cmb", "combined"]:
+            assert(freq in seed_tracker.freq_dict)
+            assert(polidx in ["T,Q,U"])
+            output_file = os.path.join(self.output_dir, f"{compt_idx}_{polidx}_{freq:03d}ghz_{sim_idx:05d}.fits")
+        else:
+            raise NotImplemented()
+
+        return output_file
+
+    def get_all_foregrounds(self, seed=None, freq=148, verbose=True, input_kappa=None, post_processes=[],
+                            save_output=True, flux_cut=7, polfix=True, dtype=np.float32):
+        if save_output:
+            os.makedirs(self.output_dir, exist_ok=True)
+        try:
+            assert(seed is not None)
+            if verbose:
+                print(f"trying to load saved foregrounds. sim idx: {seed}, freq: {freq}GHz")
+            fgmaps = enmap.empty((5,)+self.shape, self.wcs, dtype=dtype)
+            for i, compt_idx in enumerate(self.fg_compts):
+                fname = self.get_output_file_name(compt_idx, seed, freq=freq)
+                fgmaps[i] = enmap.read_fits(self.get_output_file_name(fname))
+        except:
+
+            if freq == 148:
+                fgmaps = self._generate_foreground_148GHz(seed=seed, verbose=verbose, input_kappa=input_kappa,
+                                                      post_processes=post_processes, save_output=save_output,
+                                                      flux_cut=flux_cut, polfix=polfix)
+            else:
+                raise NotImplemented()
+                fgmaps = self.get_all_foregrounds(seed=seed, freq=freq, verbose=verbose, input_kappa=input_kappa,
+                                                  post_processes=post_processes, save_output=save_output, flux_cut=flux_cut,
+                                                  polfix=polfix, dtype=dtype)
+
+        return fgmaps
+
+
+    def _generate_foreground_148GHz(self, seed=None, verbose=True, input_kappa=None, post_processes=[],
+                            flux_cut=7, polfix=True):
         if input_kappa is None:
             if verbose: print("making input gaussian kappa")
-            gaussian_kappa = self._generate_input_kappa(seed=seed)
+            gaussian_kappa = self._generate_gaussian_kappa(seed=seed)
         else:
             if input_kappa.ndim == 2: input_kappa = input_kappa[np.newaxis, ...]
             gaussian_kappa = input_kappa
-        if use_cache:
-            os.makedirs(self.cache_dir, exist_ok=True)
 
         Ny, Nx = self.shape
-        wcs = self.wcs
         Ny_pad, Nx_pad = self.shape_padded
         ny, nx = self.stamp_shape[-2:]
         taper_width = self.taper_width
@@ -715,7 +754,7 @@ class SehgalNetworkFullSky(object):
         reprojected[3][loc] = reprojected[3][loc] ** 0.63;
         del loc
         reprojected[4] = boxcox(reprojected[4], 1.25)
-        loc = np.where(reprojected[3:5] > 7)
+        loc = np.where(reprojected[3:5] > flux_cut)
         reprojected[3:5][loc] = 0.;
         del loc
         reprojected[3:5] *= self._get_jysr2thermo(mode="car")

@@ -24,14 +24,15 @@ class _SeedTracker(object):
         self.CMB = 0
         self.FG = 1
         self.KAPPA = 2
+        self.fg_dict = {"kappa":0, "ksz":1, "tsz":2, "ir_pts":3, "rad_pts":4}
         self.freq_dict = {30, 90, 148, 219, 277, 350}
 
     def get_cmb_seed(self, sim_idx):
         return self.CMB, sim_idx
 
-    def get_fg_seed(self, sim_idx, freq_idx):
-        assert (freq_idx in self.freq_dict)
-        return self.FG, sim_idx, freq_idx
+    def get_spectral_index(self, sim_idx, compt_idx):
+        assert("pts" in compt_idx)
+        return self.FG, sim_idx, self.fg_dict[compt_idx]
 
     def get_kappa_seed(self, sim_idx):
         return self.KAPPA, sim_idx
@@ -317,6 +318,7 @@ class SehgalNetworkFullSky(object):
         self.nbatch = nbatch
         self.taper_width = taper_width
         self.fg_compts = ["kappa", "ksz", "tsz", "ir_pts", "rad_pts"]
+        self.freqs =  [30, 90, 148, 219, 277, 350]
 
         Ny, Nx = self.shape
         ny, nx = self.stamp_shape[-2:]
@@ -402,6 +404,10 @@ class SehgalNetworkFullSky(object):
         self.taper = None
         self.jysr2thermo = None
 
+        self.spectral_indxes = {}
+        self.spectral_indxes["rad_pts"] = {"mean":-0.81, "std":0.11}
+        self.spectral_indxes["ir_pts"] = {"mean":3.02, "std":0.17}
+    
     def _get_xgrid(self):
         if self.xgrid is None:
             if self.xgrid_file is not None:
@@ -556,35 +562,68 @@ class SehgalNetworkFullSky(object):
 
         return output_file
 
-    def get_all_foregrounds(self, seed=None, freq=148, verbose=True, input_kappa=None, post_processes=[],
-                            save_output=True, flux_cut=7, polfix=True, dtype=np.float32):
+    def get_foreground(self, seed=None, freq=148, verbose=True, input_kappa=None, post_processes=[],
+                            save_output=True, flux_cut=7, polfix=True, dtype=np.float32, fgmaps_148=None, spec_indxes=None, overwrite=False):
+        assert(freq in self.freqs)
         if save_output:
             os.makedirs(self.output_dir, exist_ok=True)
         try:
             assert(seed is not None)
+            assert(not overwrite)
             if verbose:
                 print(f"trying to load saved foregrounds. sim idx: {seed}, freq: {freq}GHz")
             fgmaps = enmap.empty((5,)+self.shape, self.wcs, dtype=dtype)
-            for i, compt_idx in enumerate(self.fg_compts):
+            for i, compt_idx in reversed(list(enumerate(self.fg_compts))):
                 fname = self.get_output_file_name(compt_idx, seed, freq=freq)
-                fgmaps[i] = enmap.read_fits(self.get_output_file_name(fname))
+                fgmaps[i] = enmap.read_map(fname)
         except:
+            if verbose:
+                print(f"generating foregrounds. sim idx: {seed}, freq: {freq}GHz")
 
-            if freq == 148:
+            fgmaps = None    
+            if fgmaps_148 is not None:
+                fgmaps = fgmaps_148.copy()
+            if freq == 148 and fgmaps is None: 
                 fgmaps = self._generate_foreground_148GHz(seed=seed, verbose=verbose, input_kappa=input_kappa,
-                                                      post_processes=post_processes, save_output=save_output,
-                                                      flux_cut=flux_cut, polfix=polfix)
+                                                  post_processes=post_processes, 
+                                                  flux_cut=flux_cut, polfix=polfix, dtype=dtype)
             else:
-                raise NotImplemented()
-                fgmaps = self.get_all_foregrounds(seed=seed, freq=freq, verbose=verbose, input_kappa=input_kappa,
-                                                  post_processes=post_processes, save_output=save_output, flux_cut=flux_cut,
-                                                  polfix=polfix, dtype=dtype)
+                if fgmaps_148 is None:
+                    fgmaps = self.get_foreground(seed=seed, freq=148, verbose=verbose, input_kappa=input_kappa,
+                        post_processes=post_processes, save_output=save_output, flux_cut=flux_cut, polfix=polfix, dtype=dtype)  
 
+                fgmaps[2] *= fnu(freq)/fnu(148)
+                for i in [3,4]:
+                    compt_idx = self.fg_compts[i]
+                    if spec_indxes is not None and compt_idx in spec_indxes:
+                        spec_index = spec_indxes[compt_idx].copy()
+                    else:
+                        spec_index = self._get_spectral_index(seed=seed, compt_idx=self.fg_compts[i]) 
+                    fgmaps[i] *= (freq/148)**spec_index; del spec_index
+
+            if save_output:
+                for i, compt_idx in enumerate(self.fg_compts):
+                    fname = self.get_output_file_name(compt_idx, seed, freq=freq)
+                    if os.path.exists(fname) and not overwrite: continue
+                    enmap.write_map(fname, fgmaps[i])
         return fgmaps
 
+    def _save_all_foreground(self, seed=None, verbose=True, input_kappa=None, post_processes=[], flux_cut=7, polfix=True, dtype=np.float32):
+        fgmaps_148 = self.get_foreground(seed=seed, freq=148, verbose=verbose, input_kappa=input_kappa,
+                        post_processes=post_processes, save_output=True, flux_cut=flux_cut, polfix=polfix, dtype=dtype)
+
+        for freq in self.freqs:
+            pass
+
+    def _get_spectral_index(self, compt_idx, seed=None):
+        if seed is not None:
+            np.random.seed(seed_tracker.get_spectral_index(seed, compt_idx))    
+        
+        data = self.spectral_indxes[compt_idx]
+        return np.random.normal(loc=data['mean'], scale=data['std'], size=self.shape).astype(np.float32)
 
     def _generate_foreground_148GHz(self, seed=None, verbose=True, input_kappa=None, post_processes=[],
-                            flux_cut=7, polfix=True):
+                            flux_cut=7, polfix=True, dtype=np.float32):
         if input_kappa is None:
             if verbose: print("making input gaussian kappa")
             gaussian_kappa = self._generate_gaussian_kappa(seed=seed)
@@ -681,7 +720,7 @@ class SehgalNetworkFullSky(object):
 
         loc = np.where(processed[3:5] < 0)
         processed[3:5][loc] = 0.
-        reprojected = np.zeros((5, Ny, Nx), dtype=np.float32)
+        reprojected = np.zeros((5, Ny, Nx), dtype=dtype)
         for compt_idx in range(0, 5):
             if verbose: print(f"reprojecting images {compt_idx}")
             method = "interp" if compt_idx < 3 else "nearest"
@@ -734,7 +773,7 @@ class SehgalNetworkFullSky(object):
 
         ## apply transfer functions
         kmap = enmap.fft(reprojected[:3])
-        for j, compt_idx in enumerate(self.compts[:3]):
+        for j, compt_idx in enumerate(self.fg_compts[:3]):
             if verbose: print(f"applying the transfer functions to {compt_idx}")
             xtransf = self.transf_2dspec[compt_idx]['px']
             ytransf = self.transf_2dspec[compt_idx]['py']

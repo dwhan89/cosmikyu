@@ -8,7 +8,7 @@ import scipy.interpolate
 import torch
 from orphics import maps as omaps
 from past.utils import old_div
-from pixell import enmap, utils, curvedsky, powspec
+from pixell import enmap, utils, curvedsky, powspec, lensing
 
 from . import transforms, nn as cnn, model
 from .utils import car2hp_coords, hp2car_coords, load_data
@@ -533,10 +533,45 @@ class SehgalNetworkFullSky(object):
         alm = curvedsky.rand_alm(clkk)
         return curvedsky.alm2map(alm, self.template.copy())[np.newaxis, ...]
 
-    def generate_unlensed_cmb(self, seed=None):
-        if seed is not None:
-            np.random.seed(seed_tracker.get_cmb_seed(seed))
+    def _generate_unlensed_cmb_alm(self, seed=None):
+        seed = seed if seed is None else np.random.seed(seed_tracker.get_cmb_seed(seed))
+        lmax = 10000
+        ualm = curvedsky.rand_alm(self.cmb_spec[0], lmax=lmax, seed=seed)
+        return ualm
+    
+    def get_lensed_cmb(self, seed=None, kappa=None, save_output=True, verbose=True, overwrite=False, dtype=np.float64):
+        try:
+            assert(seed is not None)
+            assert(not overwrite)
+            if verbose:
+                print(f"trying to load saved lensed cmb. sim idx: {seed}")
+            lmaps = enmap.empty((3,)+self.shape, self.wcs, dtype=dtype)
+            for i, polidx in enumerate(['T','Q','U']):
+                fname = self.get_output_file_name("lensed_cmb", seed, polidx=polidx)
+                lmaps[i] = enmap.read_map(fname)
+        except: 
+            ualm = self._generate_unlensed_cmb_alm(seed=seed)
+            if kappa is None:
+                kappa = self._get_kappa(seed, dtype=np.float64)
+            lmax = 10000
+            l = np.arange(lmax+1)
+            l_fact = 1/((l*(l+1))/2)
+            l_fact[0] = 0
 
+            kalm = curvedsky.map2alm(kappa, lmax=lmax)
+            kalm = curvedsky.map2alm(kappa, lmax=lmax); del kappa
+            kalm = hp.almxfl(kalm, l_fact)
+            tshape, twcs = enmap.fullsky_geometry(res=1*utils.arcmin)
+            print("start lensing")
+            lmaps = lensing.lens_map_curved((3,)+tshape, twcs, kalm, ualm)[0]
+            lalms = curvedsky.map2alm(lmaps, lmax=lmax, spin=0)
+            lmaps = curvedsky.alm2map(lalms, enmap.zeros((3,)+self.shape, self.wcs), spin=0)
+            print("finish lensing")
+            if save_output:
+                for i, polidx in enumerate(['T','Q','U']):    
+                    fname = self.get_output_file_name("lensed_cmb", seed, polidx=polidx)
+                    enmap.write_map(fname, lmaps[i].astype(np.float32))
+        return lmaps.astype(dtype)
 
     def _get_jysr2thermo(self, mode="car"):
         assert (mode == "car")
@@ -553,7 +588,10 @@ class SehgalNetworkFullSky(object):
             output_file = os.path.join(self.output_dir, f"{compt_idx}_{freq:03d}ghz_{sim_idx:05d}.fits")
         elif compt_idx in ["kappa", "ksz"]:
             output_file = os.path.join(self.output_dir, f"{compt_idx}_{sim_idx:05d}.fits")
-        elif compt_idx in ["lensed_cmb", "combined"]:
+        elif compt_idx in ["lensed_cmb"]:
+            assert(polidx in ["T","Q","U"])
+            output_file = os.path.join(self.output_dir, f"{compt_idx}_{polidx}_{sim_idx:05d}.fits")
+        elif compt_idx in ["combined"]:
             assert(freq in seed_tracker.freq_dict)
             assert(polidx in ["T,Q,U"])
             output_file = os.path.join(self.output_dir, f"{compt_idx}_{polidx}_{freq:03d}ghz_{sim_idx:05d}.fits")
@@ -562,11 +600,24 @@ class SehgalNetworkFullSky(object):
 
         return output_file
 
+    def _get_kappa(self, seed=None, verbose=True, post_processes=[],
+            save_output=True, flux_cut=7, polfix=True, dtype=np.float64, overwrite=False):
+        
+        try:
+            assert(seed is not None)
+            assert(not overwrite)
+            fname = self.get_output_file_name("kappa", seed, freq=148)
+            kappa = enmap.read_map(fname).astype(dtype)
+        except:
+            kappa = self.get_foreground(self, seed=seed, freq=148, verbose=verbose, post_processes=post_processes,
+                            save_output=save_output, flux_cut=flux_cut, polfix=polfix, dtype=dtype, overwrite=overwrite)[0]
+
+        return kappa
+
+
     def get_foreground(self, seed=None, freq=148, verbose=True, input_kappa=None, post_processes=[],
-                            save_output=True, flux_cut=7, polfix=True, dtype=np.float32, fgmaps_148=None, spec_indxes=None, overwrite=False):
+                            save_output=True, flux_cut=7, polfix=True, dtype=np.float64, fgmaps_148=None, spec_indxes=None, overwrite=False):
         assert(freq in self.freqs)
-        if save_output:
-            os.makedirs(self.output_dir, exist_ok=True)
         try:
             assert(seed is not None)
             assert(not overwrite)
@@ -590,7 +641,7 @@ class SehgalNetworkFullSky(object):
             else:
                 if fgmaps_148 is None:
                     fgmaps = self.get_foreground(seed=seed, freq=148, verbose=verbose, input_kappa=input_kappa,
-                        post_processes=post_processes, save_output=save_output, flux_cut=flux_cut, polfix=polfix, dtype=dtype)  
+                        post_processes=post_processes, save_output=save_output, flux_cut=flux_cut, polfix=polfix, dtype=np.float32)  
 
                 fgmaps[2] *= fnu(freq)/fnu(148)
                 for i in [3,4]:
@@ -606,14 +657,8 @@ class SehgalNetworkFullSky(object):
                     fname = self.get_output_file_name(compt_idx, seed, freq=freq)
                     if os.path.exists(fname) and not overwrite: continue
                     enmap.write_map(fname, fgmaps[i])
-        return fgmaps
+        return fgmaps.astype(dtype)
 
-    def _save_all_foreground(self, seed=None, verbose=True, input_kappa=None, post_processes=[], flux_cut=7, polfix=True, dtype=np.float32):
-        fgmaps_148 = self.get_foreground(seed=seed, freq=148, verbose=verbose, input_kappa=input_kappa,
-                        post_processes=post_processes, save_output=True, flux_cut=flux_cut, polfix=polfix, dtype=dtype)
-
-        for freq in self.freqs:
-            pass
 
     def _get_spectral_index(self, compt_idx, seed=None):
         if seed is not None:
@@ -623,7 +668,7 @@ class SehgalNetworkFullSky(object):
         return np.random.normal(loc=data['mean'], scale=data['std'], size=self.shape).astype(np.float32)
 
     def _generate_foreground_148GHz(self, seed=None, verbose=True, input_kappa=None, post_processes=[],
-                            flux_cut=7, polfix=True, dtype=np.float32):
+                            flux_cut=7, polfix=True):
         if input_kappa is None:
             if verbose: print("making input gaussian kappa")
             gaussian_kappa = self._generate_gaussian_kappa(seed=seed)
@@ -770,6 +815,7 @@ class SehgalNetworkFullSky(object):
         reprojected[:3] = reprojected[:3] / self._get_weight()[0]
         reprojected[3:5] = reprojected[3:5] / self._get_weight()[1]
         reprojected = enmap.enmap(reprojected.astype(np.float32), wcs=self.wcs)
+        #return reprojected
 
         ## apply transfer functions
         kmap = enmap.fft(reprojected[:3])

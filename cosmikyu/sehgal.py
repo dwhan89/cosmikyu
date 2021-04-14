@@ -60,7 +60,7 @@ def jysr2thermo(nu, tcmb=DEFAULT_TCMB):
     return 1 / conv_fact * tcmb * 1e6
 
 
-def thermo2jysr2(nu, tcmb=DEFAULT_TCMB):
+def thermo2jysr(nu, tcmb=DEFAULT_TCMB):
     return 1 / jysr2thermo(nu, tcmb)
 
 
@@ -308,7 +308,7 @@ class Sehgal10ReprojectedFromCat(Sehgal10Reprojected):
 
 class SehgalNetworkFullSky(object):
     def __init__(self, cuda, ngpu, nbatch, norm_info_file, pixgan_state_file, tuner_state_file,
-                 clkk_spec_file, cmb_spec_file, transfer_1dspec_file, transfer_2dspec_file, taper_width, nprocess=1, xgrid_file=None,
+                 clkk_spec_file, cmb_spec_file, transfer_1dspec_file, transfer_2dspec_file, ir_spectra_index_file, radio_spectra_index_file, taper_width, nprocess=1, xgrid_file=None,
                  weight_file=None, output_dir=None):
         ## fixed full sky geometry
         self.shape = (21600, 43200)
@@ -405,9 +405,11 @@ class SehgalNetworkFullSky(object):
         self.jysr2thermo = None
 
         self.spectral_indxes = {}
-        self.spectral_indxes["rad_pts"] = {"mean":-0.81, "std":0.11}
-        self.spectral_indxes["ir_pts"] = {"mean":3.02, "std":0.17}
-    
+        #self.spectral_indxes["rad_pts"] = {"mean":-0.81, "std":0.11}
+        #self.spectral_indxes["ir_pts"] = {"mean":3.02, "std":0.17}
+        self.spectral_indxes["rad_pts"] = np.load(radio_spectra_index_file)
+        self.spectral_indxes["ir_pts"] = np.load(ir_spectra_index_file)
+
     def _get_xgrid(self):
         if self.xgrid is None:
             if self.xgrid_file is not None:
@@ -616,7 +618,7 @@ class SehgalNetworkFullSky(object):
 
 
     def get_foreground(self, seed=None, freq=148, verbose=True, input_kappa=None, post_processes=[],
-                            save_output=True, flux_cut=7, polfix=True, dtype=np.float64, fgmaps_148=None, spec_indxes=None, overwrite=False):
+                            save_output=True, flux_cut=7, polfix=True, dtype=np.float64, fgmaps_148=None, overwrite=False):
         assert(freq in self.freqs)
         try:
             assert(seed is not None)
@@ -637,7 +639,7 @@ class SehgalNetworkFullSky(object):
             if freq == 148 and fgmaps is None: 
                 fgmaps = self._generate_foreground_148GHz(seed=seed, verbose=verbose, input_kappa=input_kappa,
                                                   post_processes=post_processes, 
-                                                  flux_cut=flux_cut, polfix=polfix, dtype=dtype)
+                                                  flux_cut=flux_cut, polfix=polfix)
             else:
                 if fgmaps_148 is None:
                     fgmaps = self.get_foreground(seed=seed, freq=148, verbose=verbose, input_kappa=input_kappa,
@@ -646,11 +648,8 @@ class SehgalNetworkFullSky(object):
                 fgmaps[2] *= fnu(freq)/fnu(148)
                 for i in [3,4]:
                     compt_idx = self.fg_compts[i]
-                    if spec_indxes is not None and compt_idx in spec_indxes:
-                        spec_index = spec_indxes[compt_idx].copy()
-                    else:
-                        spec_index = self._get_spectral_index(seed=seed, compt_idx=self.fg_compts[i]) 
-                    fgmaps[i] *= (freq/148)**spec_index; del spec_index
+                    spec_index = self._get_spectral_index(seed=seed, compt_idx=self.fg_compts[i], freq=freq) 
+                    fgmaps[i] *= thermo2jysr(148)*(freq/148)**spec_index*jysr2thermo(freq); del spec_index
 
             if save_output:
                 for i, compt_idx in enumerate(self.fg_compts):
@@ -660,12 +659,34 @@ class SehgalNetworkFullSky(object):
         return fgmaps.astype(dtype)
 
 
-    def _get_spectral_index(self, compt_idx, seed=None):
+    def _get_spectral_index(self, compt_idx, freq, seed=None):
         if seed is not None:
             np.random.seed(seed_tracker.get_spectral_index(seed, compt_idx))    
         
         data = self.spectral_indxes[compt_idx]
-        return np.random.normal(loc=data['mean'], scale=data['std'], size=self.shape).astype(np.float32)
+        temp = {30:0, 90:1, 219:2, 277:3, 350:4}
+
+        ret = np.empty(shape=self.shape, dtype=np.float32)
+        nsection = 5
+        deltax = self.shape[1]//nsection
+      
+        freq_idx = temp[freq]
+        #import pdb; pdb.set_trace()
+        ret = np.random.normal(loc=data['mean'][freq_idx], scale=np.sqrt(data['cov'][freq_idx, freq_idx]), size=self.shape).astype(np.float32)
+        #for i in range(nsection):
+        #    sidx = i*deltax
+        #    eidx = sidx+deltax    
+        #    ret[:,sidx:eidx] = np.random.multivariate_normal(mean=data['mean'], cov=data['cov'], size=(self.shape[0],deltax))[...,freq_idx].astype(np.float32)
+
+        '''
+        freq_idx = temp[freq]
+        for i in range(nsection):
+            sidx = i*deltax
+            eidx = sidx+deltax    
+            ret[:,sidx:eidx] = np.random.multivariate_normal(mean=data['mean'], cov=data['cov'], size=(self.shape[0],deltax))[...,freq_idx].astype(np.float32)
+        '''
+
+        return ret
 
     def _generate_foreground_148GHz(self, seed=None, verbose=True, input_kappa=None, post_processes=[],
                             flux_cut=7, polfix=True):
@@ -765,7 +786,7 @@ class SehgalNetworkFullSky(object):
 
         loc = np.where(processed[3:5] < 0)
         processed[3:5][loc] = 0.
-        reprojected = np.zeros((5, Ny, Nx), dtype=dtype)
+        reprojected = np.zeros((5, Ny, Nx), dtype=np.float32)
         for compt_idx in range(0, 5):
             if verbose: print(f"reprojecting images {compt_idx}")
             method = "interp" if compt_idx < 3 else "nearest"

@@ -26,7 +26,7 @@ class SehgalDataNormalizerScaledLogZShrink(object):
 
         for i, channel_idx in enumerate(self.channel_idxes):
             temp = self.norm_info[channel_idx]
-            shrink_fact = shrink_fact if "shrink_fact" in temp else 1
+            shrink_fact = temp["shrink_fact"] if "shrink_fact" in temp else 1
             self.mult_normalizers[i] = Multiply(1. / shrink_fact)
 
     def __call__(self, sample):
@@ -58,7 +58,7 @@ class SehgalDataUnnormalizerScaledLogZShrink(object):
 
         for i, channel_idx in enumerate(self.channel_idxes):
             temp = self.norm_info[channel_idx]
-            shrink_fact = shrink_fact if "shrink_fact" in temp else 1
+            shrink_fact = temp["shrink_fact"] if "shrink_fact" in temp else 1
             self.mult_unnormalizers[i] = Multiply(shrink_fact)
 
     def __call__(self, sample):

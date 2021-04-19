@@ -394,6 +394,77 @@ class UNET_Generator(nn.Module):
         if self.activation is not None:
             self.model_dict["final"] = nn.Sequential(*self.activation)
 
+    class RESUNET(nn.Module):
+        def __init__(self, shape, nconv_layer=2, nconv_fc=32, ngpu=1, kernal_size=5, stride=2, padding=2,
+                     output_padding=1, normalize=True, activation=None, nin_channel=3, nout_channel=3,
+                     nthresh_layer=1, dropout_rate=0.5):
+            super().__init__()
+            self.shape = shape
+            self.nconv_layer = nconv_layer
+            self.normalize = normalize
+            self.ngpu = ngpu
+            self.nconv_fc = nconv_fc
+            self.kernal_size = kernal_size
+            self.stride = stride
+            self.padding = padding
+            self.output_padding = output_padding
+            self.ds_size = shape[-1] // self.stride ** self.nconv_layer
+            self.activation = activation
+            self.model_dict = nn.ModuleDict()
+            self.nin_channel = nin_channel
+            self.nout_channel = nout_channel
+            self.nthresh_layer = nthresh_layer
+            self.ntotal_layer = nthresh_layer + nconv_layer
+            self.dropout_rate = dropout_rate
+
+            nconv_lc = nconv_fc * self.stride ** (self.nconv_layer - 1)
+            ## define down layers
+            self.model_dict["down0"] = UNetDown(self.nin_channel, nconv_fc, normalize=False, dropout_rate=0.0,
+                                                kernal_size=self.kernal_size,
+                                                stride=self.stride, padding=self.padding, ngpu=ngpu)
+            for i in range(1, self.nconv_layer):
+                self.model_dict["down%d" % (i)] = UNetDown(self.nconv_fc * self.stride ** (i - 1),
+                                                           self.nconv_fc * self.stride ** i, normalize=True,
+                                                           kernal_size=self.kernal_size,
+                                                           stride=self.stride, padding=self.padding, ngpu=ngpu)
+
+            ## bottom treshold layers
+            for i in range(self.nthresh_layer):
+                down_idx = "down%d" % (self.nconv_layer + i)
+                use_leaky = i < self.nthresh_layer - 1
+                normalize = i < self.nthresh_layer - 1
+                self.model_dict[down_idx] = UNetDown(nconv_lc, nconv_lc, normalize=normalize, use_leaky=use_leaky,
+                                                     kernal_size=self.kernal_size,
+                                                     stride=self.stride, padding=self.padding, ngpu=ngpu)
+            for i in range(self.nthresh_layer):
+                up_idx = "up%d" % i
+                upin_channel = nconv_lc if i == 0 else nconv_lc * 2
+                dropout_rate = self.dropout_rate if i > 0 else 0.0
+                self.model_dict[up_idx] = UNetUP(upin_channel, nconv_lc, normalize=True, dropout_rate=dropout_rate,
+                                                 kernal_size=self.kernal_size,
+                                                 stride=self.stride, padding=self.padding,
+                                                 output_padding=self.output_padding, ngpu=ngpu)
+
+            ## up layers
+
+            for i in range(self.nconv_layer + 1):
+                self.model_dict["up%d" % (i + self.nthresh_layer)] = UNetUP(int(nconv_lc * self.stride ** (-i + 1)),
+                                                                            int(nconv_lc * self.stride ** (-i - 1)),
+                                                                            normalize=True, dropout_rate=0,
+                                                                            kernal_size=self.kernal_size,
+                                                                            stride=self.stride, padding=self.padding,
+                                                                            output_padding=self.output_padding,
+                                                                            ngpu=ngpu)
+            self.model_dict["up%d" % (self.ntotal_layer - 1)] = UNetUP(self.nconv_fc * 2, self.nout_channel,
+                                                                       normalize=False, dropout_rate=0,
+                                                                       kernal_size=self.kernal_size, stride=self.stride,
+                                                                       padding=self.padding,
+                                                                       output_padding=self.output_padding, ngpu=ngpu,
+                                                                       activation=False)
+            if self.activation is not None:
+                self.model_dict["final"] = nn.Sequential(*self.activation)
+
+
     def forward(self, img):
         ret = {"down-1": img}
         for i in range(self.ntotal_layer):

@@ -650,12 +650,12 @@ class SehgalNetworkFullSky(object):
                     compt_idx = self.fg_compts[i]
                     spec_index = self._get_spectral_index(seed=seed, compt_idx=self.fg_compts[i], freq=freq) 
                     fgmaps[i] *= thermo2jysr(148)*(freq/148)**spec_index*jysr2thermo(freq); del spec_index
-
+                   
             if save_output:
                 for i, compt_idx in enumerate(self.fg_compts):
                     fname = self.get_output_file_name(compt_idx, seed, freq=freq)
                     if os.path.exists(fname) and not overwrite: continue
-                    enmap.write_map(fname, fgmaps[i])
+                    enmap.write_map(fname, fgmaps[i].astype(np.float32))
         return fgmaps.astype(dtype)
 
 

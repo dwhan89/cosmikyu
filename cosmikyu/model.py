@@ -470,7 +470,7 @@ class ResUNetUPInterface(nn.Module):
 class ResUNET_Generator(nn.Module):
     def __init__(self, shape, nconv_layer=2, nconv_fc=64, ngpu=1,
                   activation=None, nin_channel=3, nout_channel=3,
-                 nthresh_layer=1, dropout_rate=0.5):
+                 nthresh_layer=1, identity=False):
         super().__init__()
         self.shape = shape
         self.nconv_layer = nconv_layer
@@ -488,7 +488,7 @@ class ResUNET_Generator(nn.Module):
         self.nout_channel = nout_channel
         self.nthresh_layer = 1
         self.ntotal_layer = nconv_layer
-        self.dropout_rate = dropout_rate
+        self.identity
 
         nconv_lc = nconv_fc * self.stride ** (self.nconv_layer - 1)
         ## define down layers
@@ -542,7 +542,9 @@ class ResUNET_Generator(nn.Module):
             model_key = "up%d" % (i)
             ret_up = self.model_dict[f"{model_key}_int"](ret_up,  ret[skip_key] if skip_key in ret else None)
             ret_up = self.model_dict[model_key](ret_up)
-        return ret_up if "final" not in self.model_dict else self.model_dict["final"](ret_up)
+        ret_up = ret_up if "final" not in self.model_dict else self.model_dict["final"](ret_up)
+        ret_up = ret_up if not self.identity else ret_up+img
+        return ret_up
 
 
 class VAEGAN_Generator(nn.Module):
@@ -599,12 +601,13 @@ class VAEGAN_Generator(nn.Module):
         ## up layers
 
         for i in range(self.nconv_layer + 1):
-            self.model_dict["up%d" % (i + self.nthresh_layer)] = UNetUP(int(nconv_lc * self.stride ** (-i + 1)),
+            self.model_dict["up%d" % (i + self.nthresh_layer)] = UNetUP(int(nconv_lc * self.stride ** (-i )),
                                                                         int(nconv_lc * self.stride ** (-i - 1)),
                                                                         normalize=True, dropout_rate=0,
                                                                         kernal_size=self.kernal_size,
                                                                         stride=self.stride, padding=self.padding,
-                                                                        output_padding=self.output_padding, ngpu=ngpu)
+                                                                        output_padding=self.output_padding, ngpu=ngpu,
+                                                                        use_leaky=True)
             
         self.model_dict["up%d" % (self.ntotal_layer - 1)] = UNetUP(self.nconv_fc, self.nout_channel, normalize=False,
                                                                    dropout_rate=0, kernal_size=self.kernal_size,

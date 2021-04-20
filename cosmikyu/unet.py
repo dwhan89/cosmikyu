@@ -7,16 +7,15 @@ import torch
 import torch.nn as nn
 from torch.autograd import Variable
 from torchvision.utils import save_image
-
+from model import ResUNET_Generator
 from cosmikyu import config
 
 class UNET(object):
-    def __init__(self, identifier, shape, latent_dim, output_path=None, experiment_path=None,
+    def __init__(self, identifier, shape, output_path=None, experiment_path=None,
                  cuda=False, ngpu=1):
         self.cuda = cuda
         self.ngpu = 0 if not self.cuda else ngpu
         self.shape = shape
-        self.latent_dim = latent_dim
         self.identifier = identifier
 
         self.output_path = output_path or os.path.join(config.default_output_dir)
@@ -142,11 +141,14 @@ class UNET(object):
 
 
 class ResUNET(UNET):
-    def __init__(self, identifier, shape, latent_dim, output_path=None, experiment_path=None,
-                 cuda=False, ngpu=1):
-        super(self).__init__(identifier, shape, latent_dim, output_path=output_path, experiment_path=experiment_path,
+    def __init__(self, identifier, shape, activation=[nn.Tanh()], nin_channel=3, nout_channel=3, nconv_layer=2,
+                 nthresh_layer=1, ncov_fc=64, identity=False, output_path=None, experiment_path=None, cuda=False, ngpu=1):
+        super(self).__init__(identifier, shape, output_path=output_path, experiment_path=experiment_path,
                  cuda=cuda, ngpu=ngpu)
         self.loss_function = nn.MSELoss().to(device=self.device)
+        self.unet = ResUNET_Generator(shape, nconv_layer=nconv_layer, nconv_fc=ncov_fc, ngpu=ngpu,
+                  activation=activation, nin_channel=nin_channel, nout_channel=nout_channel,
+                 nthresh_layer=nthresh_layer, identity=identity)
 
     def _get_optimizers(self, **kwargs):
         lr, betas = kwargs['lr'], kwargs["betas"]

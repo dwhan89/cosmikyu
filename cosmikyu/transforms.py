@@ -504,13 +504,19 @@ class BlockReduce(object):
 
 
 class NormalizeRGB(object):
+    def __init__(self, factor=1):
+        self.factor=factor
+
     def __call__(self, sample):
-        return (sample - 127.5) / 127.5
+        return (sample - 127.5) / 127.5/self.factor
 
 
-class UNormalizeRGB(object):
+class UNormalizeRGB(object): 
+    def __init__(self, factor=1):
+        self.factor=factor
+    
     def __call__(self, sample):
-        return (sample * 127.5) + 127.5
+        return (sample * 127.5)*self.factor + 127.5
 
 
 class MultiComptMultiply(object):

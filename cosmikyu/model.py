@@ -458,7 +458,6 @@ class ResUNetUPInterface(nn.Module):
             ret = nn.parallel.data_parallel(self.model, z, range(self.ngpu))
         else:
             ret = self.model(z)
-        print(skip_input.shape, ret.shape)
         if skip_input is not None:
             ret = torch.cat((ret, skip_input), 1)
 
@@ -488,7 +487,7 @@ class ResUNET_Generator(nn.Module):
         self.nout_channel = nout_channel
         self.nthresh_layer = 1
         self.ntotal_layer = nconv_layer
-        self.identity
+        self.identity = identity
 
         nconv_lc = nconv_fc * self.stride ** (self.nconv_layer - 1)
         ## define down layers

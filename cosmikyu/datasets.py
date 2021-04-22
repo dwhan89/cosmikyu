@@ -2,6 +2,7 @@ import os
 
 import lmdb
 import numpy as np
+import torch
 from torch.utils.data import Dataset
 
 
@@ -92,7 +93,7 @@ class MapDataSet(Dataset):
         return self.nmaps
 
     def __getitem__(self, idx):
-        data = self.storage[idx].copy()
+        data = torch.Tensor(self.storage[idx].copy())
         for transform in self.transforms:
             data = transform(data)
         return [data, 0] if self.dummy_label else data

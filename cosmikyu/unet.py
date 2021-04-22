@@ -7,16 +7,17 @@ import torch
 import torch.nn as nn
 from torch.autograd import Variable
 from torchvision.utils import save_image
-from model import ResUNET_Generator
-from cosmikyu import config
+from cosmikyu import config, model
 
 class UNET(object):
-    def __init__(self, identifier, shape, output_path=None, experiment_path=None,
+    def __init__(self, identifier, shape, nin_channel, nout_channel, output_path=None, experiment_path=None,
                  cuda=False, ngpu=1):
         self.cuda = cuda
         self.ngpu = 0 if not self.cuda else ngpu
         self.shape = shape
         self.identifier = identifier
+        self.nin_channel = nin_channel
+        self.nout_channel = nout_channel
 
         self.output_path = output_path or os.path.join(config.default_output_dir)
         self.tracking_path = os.path.join(self.output_path, "mlruns")
@@ -64,7 +65,7 @@ class UNET(object):
     def _get_optimizers(self, **kwargs):
         raise NotImplemented()
 
-    def _eval_loss(self, gen_imgs, labels):
+    def _eval_loss(self, gen_imgs, labels, **kwargs):
         raise NotImplemented()
 
     def generate_samples(self, input_imgs, concat=False, train=False):
@@ -111,11 +112,10 @@ class UNET(object):
             for i, sample in enumerate(dataloader):
                 imgs = sample[0]
                 input_imgs = Variable(imgs[:, :self.nin_channel, ...].type(self.Tensor))
-                labels = Variable(imgs[:, self.nin_channel:self.nout_channel, ...].type(self.Tensor))
+                labels = Variable(imgs[:, self.nin_channel:, ...].type(self.Tensor))
                 
                 opt.zero_grad()
-                # Generate a batch of images
-                gen_imgs = self.generator(input_imgs)
+                gen_imgs = self.unet(input_imgs)
 
                 # Adversarial loss
                 loss = self._eval_loss(gen_imgs, labels, **kwargs)
@@ -127,9 +127,11 @@ class UNET(object):
                           % (epoch, nepochs, batches_done % len(dataloader), len(dataloader), loss.item())
                           )
                 if batches_done % sample_interval == 0:
-                    temp = torch.cat((gen_imgs.data[:1, ...], labels.data[:1, ...]), 0)
+                    #import pdb; pdb.set_trace()
+                    temp = torch.cat((input_imgs.data[:1, ...], labels.data[:1, ...], gen_imgs[:1,...].data), 0)
+                    #temp = torch.cat((temp[:1, ...].data, gen_imgs[:1,...].data), 0)
                     save_image(temp, os.path.join(artifacts_path, "%d.png" % batches_done), normalize=True,
-                               nrow=int(temp.shape[0] / 2.))
+                               nrow=int(temp.shape[0]))
                 batches_done += 1
 
             if int(epoch + 1) % save_interval == 0 and save_states:
@@ -143,16 +145,17 @@ class UNET(object):
 class ResUNET(UNET):
     def __init__(self, identifier, shape, activation=[nn.Tanh()], nin_channel=3, nout_channel=3, nconv_layer=2,
                  nthresh_layer=1, ncov_fc=64, identity=False, output_path=None, experiment_path=None, cuda=False, ngpu=1):
-        super(self).__init__(identifier, shape, output_path=output_path, experiment_path=experiment_path,
+        super().__init__(identifier, shape, nin_channel=nin_channel, nout_channel=nout_channel, output_path=output_path, experiment_path=experiment_path,
                  cuda=cuda, ngpu=ngpu)
         self.loss_function = nn.MSELoss().to(device=self.device)
-        self.unet = ResUNET_Generator(shape, nconv_layer=nconv_layer, nconv_fc=ncov_fc, ngpu=ngpu,
+        self.unet = model.ResUNET_Generator(shape, nconv_layer=nconv_layer, nconv_fc=ncov_fc, ngpu=ngpu,
                   activation=activation, nin_channel=nin_channel, nout_channel=nout_channel,
-                 nthresh_layer=nthresh_layer, identity=identity)
+                 nthresh_layer=nthresh_layer, identity=identity).to(device=self.device)
 
     def _get_optimizers(self, **kwargs):
         lr, betas = kwargs['lr'], kwargs["betas"]
         return torch.optim.Adam(self.unet.parameters(), lr=lr, betas=betas)
 
-    def _eval_loss(self, gen_imgs, labels):
+    def _eval_loss(self, gen_imgs, labels, **kwargs):
+
         return self.loss_function(gen_imgs, labels)

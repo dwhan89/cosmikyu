@@ -604,7 +604,7 @@ class SehgalNetworkFullSky(object):
             ret.append(self.get_output_file_name('lensed_cmb', sim_idx, freq=None, polidx=polidx))
         for compt_idx in ["kappa","ksz"]:
             ret.append(self.get_output_file_name(compt_idx, sim_idx, freq=None, polidx=None))
-        for freq in SN.freqs:
+        for freq in self.freqs:
             for compt_idx in ["tsz","rad_pts", "ir_pts"]:
                 ret.append(self.get_output_file_name(compt_idx, sim_idx, freq=freq, polidx=None))
 

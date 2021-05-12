@@ -540,7 +540,19 @@ class SehgalNetworkFullSky(object):
         lmax = 10000
         ualm = curvedsky.rand_alm(self.cmb_spec[0], lmax=lmax, seed=seed)
         return ualm
-    
+   
+    def get_temperature_map(self, seed=None, kappa=None, save_output=True, verbose=True, overwrite=False, dtype=np.float64):
+        try:
+            assert(seed is not None)
+            assert(not overwrite)
+            if verbose:
+                print(f"trying to load saved lensed temperature cmb. sim idx: {seed}")
+            lmaps = enmap.read_map(self.get_output_file_name("lensed_cmb", seed, polidx='T'))
+        except: 
+            lmaps = self.get_lensed_cmb(seed, kappa, save_output, verbose, overwrite, dtype)[0] 
+        return lmaps.astype(dtype)
+
+
     def get_lensed_cmb(self, seed=None, kappa=None, save_output=True, verbose=True, overwrite=False, dtype=np.float64):
         try:
             assert(seed is not None)
@@ -572,6 +584,7 @@ class SehgalNetworkFullSky(object):
             if save_output:
                 for i, polidx in enumerate(['T','Q','U']):    
                     fname = self.get_output_file_name("lensed_cmb", seed, polidx=polidx)
+                    os.makedirs(os.path.dirname(fname), exist_ok=True)
                     enmap.write_map(fname, lmaps[i].astype(np.float32))
         return lmaps.astype(dtype)
 
@@ -584,19 +597,34 @@ class SehgalNetworkFullSky(object):
             self.jysr2thermo = self.jysr2thermo.astype(np.float32)
         return self.jysr2thermo
 
+    def get_all_output_file_names(self, sim_idx):
+        ret = []
+        ## cmb
+        for polidx in ["T","Q","U"]:
+            ret.append(self.get_output_file_name('lensed_cmb', sim_idx, freq=None, polidx=polidx))
+        for compt_idx in ["kappa","ksz"]:
+            ret.append(self.get_output_file_name(compt_idx, sim_idx, freq=None, polidx=None))
+        for freq in self.freqs:
+            for compt_idx in ["tsz","rad_pts", "ir_pts"]:
+                ret.append(self.get_output_file_name(compt_idx, sim_idx, freq=freq, polidx=None))
+
+            ret.append(self.get_output_file_name("combined", sim_idx, freq=freq, polidx='T'))
+
+        return ret
+
     def get_output_file_name(self, compt_idx, sim_idx, freq=None, polidx=None):
         if compt_idx in ["tsz", "rad_pts", "ir_pts"]:
             assert(freq in seed_tracker.freq_dict)
-            output_file = os.path.join(self.output_dir, f"{compt_idx}_{freq:03d}ghz_{sim_idx:05d}.fits")
+            output_file = os.path.join(self.output_dir, f"{sim_idx:05d}/{compt_idx}_{freq:03d}ghz_{sim_idx:05d}.fits")
         elif compt_idx in ["kappa", "ksz"]:
-            output_file = os.path.join(self.output_dir, f"{compt_idx}_{sim_idx:05d}.fits")
+            output_file = os.path.join(self.output_dir, f"{sim_idx:05d}/{compt_idx}_{sim_idx:05d}.fits")
         elif compt_idx in ["lensed_cmb"]:
             assert(polidx in ["T","Q","U"])
-            output_file = os.path.join(self.output_dir, f"{compt_idx}_{polidx}_{sim_idx:05d}.fits")
+            output_file = os.path.join(self.output_dir, f"{sim_idx:05d}/{compt_idx}_{polidx}_{sim_idx:05d}.fits")
         elif compt_idx in ["combined"]:
             assert(freq in seed_tracker.freq_dict)
-            assert(polidx in ["T,Q,U"])
-            output_file = os.path.join(self.output_dir, f"{compt_idx}_{polidx}_{freq:03d}ghz_{sim_idx:05d}.fits")
+            assert(polidx in ["T","Q","U"])
+            output_file = os.path.join(self.output_dir, f"{sim_idx:05d}/{compt_idx}_{polidx}_{freq:03d}ghz_{sim_idx:05d}.fits")
         else:
             raise NotImplemented()
 
@@ -654,9 +682,35 @@ class SehgalNetworkFullSky(object):
             if save_output:
                 for i, compt_idx in enumerate(self.fg_compts):
                     fname = self.get_output_file_name(compt_idx, seed, freq=freq)
-                    if os.path.exists(fname) and not overwrite: continue
+                    if os.path.exists(fname) and not overwrite: continue 
+                    os.makedirs(os.path.dirname(fname), exist_ok=True)
                     enmap.write_map(fname, fgmaps[i].astype(np.float32))
         return fgmaps.astype(dtype)
+
+    def get_combined_map(self, seed=None, freq=148, verbose=True, input_kappa=None, post_processes=[],
+            save_output=True, flux_cut=7, polfix=True, dtype=np.float64, fgmaps_148=None, tmap=None, fgmaps=None, overwrite=False):
+        
+        
+        fname = self.get_output_file_name('combined', seed, freq=freq, polidx='T')
+        try:
+            print("Loading combiend map")
+            assert(not overwrite)
+            cmap = enmap.read_map(fname)
+        except:
+            if fgmaps is None:
+                fgmaps = self.get_foreground(seed, freq, verbose, input_kappa, post_processes, save_output,flux_cut, polfix, dtype, fgmaps_148, overwrite)    
+            if tmap is None:
+                if input_kappa is None and fgmaps is not None:
+                    tmap = self.get_temperature_map(seed, fgmaps[0], save_output,  verbose, overwrite=overwrite, dtype=dtype)
+
+            cmap = tmap+np.sum(fgmaps[1:,...], axis=0)
+
+            if save_output:
+                os.makedirs(os.path.dirname(fname), exist_ok=True)
+                enmap.write_map(fname, cmap.astype(np.float32))
+        return cmap.astype(dtype)
+
+
 
 
     def _get_spectral_index(self, compt_idx, freq, seed=None):

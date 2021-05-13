@@ -157,5 +157,5 @@ class ResUNET(UNET):
         return torch.optim.Adam(self.unet.parameters(), lr=lr, betas=betas)
 
     def _eval_loss(self, gen_imgs, labels, **kwargs):
-
+ 
         return self.loss_function(gen_imgs, labels)

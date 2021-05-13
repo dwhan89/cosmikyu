@@ -512,7 +512,6 @@ class ResUNET_Generator(nn.Module):
         for i in range(self.nconv_layer + 1):
             nin_filters = int(nconv_lc * self.stride ** (-i + 1))
             nout_filters = int(nconv_lc * self.stride ** (-i))
-            print(nin_filters, nout_filters,i, i + self.nthresh_layer) 
             self.model_dict["up%d_int" % (i)] = ResUNetUPInterface(nin_filters, nout_filters,
                     kernal_size=self.kernal_size, padding=self.padding, output_padding=self.output_padding, ngpu=ngpu)
             self.model_dict["up%d" % (i)] = ResUNetBlock(nout_filters*2,

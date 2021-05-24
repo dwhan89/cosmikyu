@@ -157,7 +157,7 @@ Distributed under the APATCH-2.0 License. See `LICENSE` for more information.
 <!-- CONTACT -->
 ## Contact
 
-Your Name - [@dwhan89](https://twitter.com/dwhan89) - email
+Your Name - [@dwhan89](https://twitter.com/dwhan89)
 
 Project Link: [https://github.com/dwhan89/cosmikyu](https://github.com/dwhan89/cosmikyu)
 

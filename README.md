@@ -82,13 +82,14 @@
 <!-- ABOUT THE PROJECT -->
 ## About The Project
 
-[![Product Name Screen Shot][product-screenshot]](https://example.com)
+<!--[![Product Name Screen Shot][product-screenshot]](https://example.com)-->
 
 ### Built With
 
-* []()
-* []()
-* []()
+* [Python3](https://www.python.org/)
+* [PyTorch](https://pytorch.org/)
+* [pixell](https://pixell.readthedocs.io/en/latest/)
+* [astropy](https://www.astropy.org/)
 
 
 
@@ -100,9 +101,9 @@ To get a local copy up and running follow these simple steps.
 ### Prerequisites
 
 This is an example of how to list things you need to use the software and how to install them.
-* npm
+* python modules
   ```sh
-  npm install npm@latest -g
+  pip install -r requirements.txt
   ```
 
 ### Installation
@@ -111,20 +112,20 @@ This is an example of how to list things you need to use the software and how to
    ```sh
    git clone https://github.com/dwhan89/cosmikyu.git
    ```
-2. Install NPM packages
+2. Install cosmikyu packages
    ```sh
-   npm install
+   pip install .
    ```
 
 
 
 <!-- USAGE EXAMPLES -->
-## Usage
+<!--## Usage
 
 Use this space to show useful examples of how a project can be used. Additional screenshots, code examples and demos work well in this space. You may also link to more resources.
 
 _For more examples, please refer to the [Documentation](https://example.com)_
-
+-->
 
 
 <!-- ROADMAP -->
@@ -164,13 +165,13 @@ Project Link: [https://github.com/dwhan89/cosmikyu](https://github.com/dwhan89/c
 
 
 <!-- ACKNOWLEDGEMENTS -->
-## Acknowledgements
+<!--## Acknowledgements
 
 * []()
 * []()
 * []()
 
-
+-->
 
 
 

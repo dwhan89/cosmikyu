@@ -2,12 +2,48 @@ import numpy as np
 from orphics import maps as omaps
 from pixell import enmap
 from skimage.measure import block_reduce
-
+import torch
 from . import utils
 
 
+class SehgalDataResnetNormalizer(object):
+    def __init__(self, normalization_info_file, channel_idxes=["t", "q", "u", "t"], zfact=6):
+        temp = np.load(normalization_info_file, allow_pickle=True)
+        self.norm_info = {key: temp[key].item() for key in temp}
+        self.channel_idxes = channel_idxes
+        self.nchannel = len(self.channel_idxes)
+        self.z_normalizers = [None] * self.nchannel
+
+        for i, channel_idx in enumerate(self.channel_idxes):
+            temp = self.norm_info[channel_idx]
+            self.z_normalizers[i] = ZNormalize(temp["znorm_mean"], temp["znorm_std"], zfact)
+
+    def __call__(self, sample):
+        assert (len(sample.shape) == 3)
+        for i in range(self.nchannel):
+            sample[i] = self.z_normalizers[i](sample[i, ...])
+        return sample
+
+class SehgalDataResnetUnnormalizer(object):
+    def __init__(self, normalization_info_file, channel_idxes=["t", "q", "u", "t"], zfact=6):
+        temp = np.load(normalization_info_file, allow_pickle=True)
+        self.norm_info = {key: temp[key].item() for key in temp}
+        self.channel_idxes = channel_idxes
+        self.nchannel = len(self.channel_idxes)
+        self.z_unnormalizers = [None] * self.nchannel
+
+        for i, channel_idx in enumerate(self.channel_idxes):
+            temp = self.norm_info[channel_idx]
+            self.z_unnormalizers[i] = ZUnnormalize(temp["znorm_mean"], temp["znorm_std"], zfact)
+
+    def __call__(self, sample):
+        assert (len(sample.shape) == 3)
+        for i in range(self.nchannel):
+            sample[i] = self.z_unnormalizers[i](sample[i, ...])
+        return sample
+
 class SehgalDataNormalizerScaledLogZShrink(object):
-    def __init__(self, normalization_info_file, channel_idxes=["kappa", "ksz", "tsz", "ir_pts", "rad_pts"]):
+    def __init__(self, normalization_info_file, channel_idxes=["kappa", "ksz", "tsz", "ir_pts", "rad_pts"], log_norm_idxes = [2,3,4]):
         temp = np.load(normalization_info_file, allow_pickle=True)
         self.norm_info = {key: temp[key].item() for key in temp}
         self.channel_idxes = channel_idxes
@@ -15,10 +51,11 @@ class SehgalDataNormalizerScaledLogZShrink(object):
         self.log_normalizers = [None] * self.nchannel
         self.z_normalizers = [None] * self.nchannel
         self.mult_normalizers = [None] * self.nchannel
+        self.log_norm_idxes = log_norm_idxes
 
         for i, channel_idx in enumerate(self.channel_idxes):
             temp = self.norm_info[channel_idx]
-            self.log_normalizers[i] = ToScaledLogScale(scaling=temp["lognorm_std"]) if i > 1 else Identity()
+            self.log_normalizers[i] = ToScaledLogScale(scaling=temp["lognorm_std"]) if i in log_norm_idxes  else Identity()
 
         for i, channel_idx in enumerate(self.channel_idxes):
             temp = self.norm_info[channel_idx]
@@ -39,7 +76,7 @@ class SehgalDataNormalizerScaledLogZShrink(object):
 
 
 class SehgalDataUnnormalizerScaledLogZShrink(object):
-    def __init__(self, normalization_info_file, channel_idxes=["kappa", "ksz", "tsz", "ir_pts", "rad_pts"]):
+    def __init__(self, normalization_info_file, channel_idxes=["kappa", "ksz", "tsz", "ir_pts", "rad_pts"],  log_norm_idxes = [2,3,4]):
         temp = np.load(normalization_info_file, allow_pickle=True)
         self.norm_info = {key: temp[key].item() for key in temp}
         self.channel_idxes = channel_idxes
@@ -47,10 +84,10 @@ class SehgalDataUnnormalizerScaledLogZShrink(object):
         self.log_unnormalizers = [None] * self.nchannel
         self.z_unnormalizers = [None] * self.nchannel
         self.mult_unnormalizers = [None] * self.nchannel
-
+        self.log_norm_idxes = log_norm_idxes 
         for i, channel_idx in enumerate(self.channel_idxes):
             temp = self.norm_info[channel_idx]
-            self.log_unnormalizers[i] = FromScaledLogScale(scaling=temp["lognorm_std"]) if i > 1 else Identity()
+            self.log_unnormalizers[i] = FromScaledLogScale(scaling=temp["lognorm_std"]) if  i in log_norm_idxes  else Identity()
 
         for i, channel_idx in enumerate(self.channel_idxes):
             temp = self.norm_info[channel_idx]
@@ -62,11 +99,16 @@ class SehgalDataUnnormalizerScaledLogZShrink(object):
             self.mult_unnormalizers[i] = Multiply(shrink_fact)
 
     def __call__(self, sample):
-        assert (len(sample.shape) == 3)
-        for i in range(self.nchannel):
-            sample[i] = self.mult_unnormalizers[i](sample[i, ...])
-            sample[i] = self.z_unnormalizers[i](sample[i, ...])
-            sample[i] = self.log_unnormalizers[i](sample[i, ...])
+        if len(sample.shape) == 3:
+            for i in range(self.nchannel):
+                sample[i] = self.mult_unnormalizers[i](sample[i, ...])
+                sample[i] = self.z_unnormalizers[i](sample[i, ...])
+                sample[i] = self.log_unnormalizers[i](sample[i, ...])
+        else:
+            for i in range(self.nchannel):
+                sample[:,i,...] = self.mult_unnormalizers[i](sample[:,i, ...])
+                sample[:,i,...] = self.z_unnormalizers[i](sample[:,i, ...])
+                sample[:,i,...] = self.log_unnormalizers[i](sample[:,i, ...])
         return sample
 
 
@@ -373,12 +415,18 @@ class FromScaledLogScale(object):
     def __init__(self, scaling=1.):
         self.scaling = scaling
 
+    '''
     def __call__(self, sample):
         loc = sample >= 0
         sample[loc] = (np.exp(sample[loc]) - 1.) * self.scaling
         sample[~loc] = -1 * ((np.exp(np.abs(sample[~loc])) - 1.) * self.scaling)
         return sample
-
+    '''
+    def __call__(self, sample):
+        loc = sample >= 0
+        sample[loc] = (torch.exp(sample[loc]) - 1.) * self.scaling
+        sample[~loc] = -1 * ((torch.exp(torch.abs(sample[~loc])) - 1.) * self.scaling)
+        return sample
 
 class FromSymLogScale(object):
     def __call__(self, sample):

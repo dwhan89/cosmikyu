@@ -77,7 +77,7 @@ class CombiendDataSet(Dataset):
 
 
 class DataSetJoiner(Dataset):
-    def __init__(self, datasets=[], dummy_label=False, dtype=np.float64, shape=(10, 128, 128), shuffle=True):
+    def __init__(self, datasets=[], dummy_label=False, dtype=np.float64, shape=(10, 128, 128), shuffle=True, transforms=[]):
         assert (len(datasets) > 0)
         self.nsample = len(datasets[0])
         for db in datasets:
@@ -88,6 +88,7 @@ class DataSetJoiner(Dataset):
         self.shape = shape
         self.dummy_label = dummy_label
         self.shuffle = shuffle
+        self.transforms = transforms
 
     def __len__(self):
         return self.nsample
@@ -104,6 +105,9 @@ class DataSetJoiner(Dataset):
             sidx = eidx
             del sample
         assert (self.shape[0] == eidx)
+
+        for transform in self.transforms:
+            data = transform(data)
         return [data, 0] if self.dummy_label else data
 
 

@@ -9,7 +9,7 @@ from torch.autograd import Variable
 from torchvision.utils import save_image
 from cosmikyu import config, model
 
-class UNET(object):
+class VAE(object):
     def __init__(self, identifier, shape, nin_channel, nout_channel, output_path=None, experiment_path=None,
                  cuda=False, ngpu=1):
         self.cuda = cuda
@@ -30,7 +30,7 @@ class UNET(object):
             print("[WARNING] You have a CUDA device. You probably want to run with CUDA enabled")
         self.device = torch.device("cuda" if self.cuda else "cpu")
 
-        self.unet = None
+        self.vae = None
 
         self.model_params = {"shape": shape, "sampler": "normal"}
         self.Tensor = torch.cuda.FloatTensor if self.cuda else torch.FloatTensor
@@ -41,27 +41,27 @@ class UNET(object):
         if os.path.exists(saving_point_tracker_file) and not postfix:
             with open(saving_point_tracker_file, "r") as handle:
                 postfix = handle.readline()
-        unet_state_file = os.path.join(output_path, "unet{}.pt".format(postfix))
+        vae_state_file = os.path.join(output_path, "vae{}.pt".format(postfix))
         try:
             print("loading saved states", postfix)
             if mlflow_run and False:
-                self.unet = mlflow.pytorch.load_model(unet_state_file)
+                self.vae = mlflow.pytorch.load_model(vae_state_file)
             else:
-                self.unet.load_state_dict(torch.load(unet_state_file, map_location=self.device))
+                self.vae.load_state_dict(torch.load(vae_state_file, map_location=self.device))
         except Exception:
             print("failed to load saved states")
 
     def save_states(self, output_path, postfix="", mlflow_run=None):
         postfix = "" if postfix == "" else "_{}".format(str(postfix))
         print("saving states", postfix)
-        unet_state_file = os.path.join(output_path, "unet{}.pt".format(postfix))
+        vae_state_file = os.path.join(output_path, "vae{}.pt".format(postfix))
         saving_point_tracker_file = os.path.join(output_path, "saving_point.txt")
         with open(saving_point_tracker_file, "w") as handle:
             handle.write(postfix)
         if mlflow_run and False:
-            mlflow.pytorch.save_model(self.unet, unet_state_file)
+            mlflow.pytorch.save_model(self.vae, vae_state_file)
         else:
-            torch.save(self.unet.state_dict(), unet_state_file)
+            torch.save(self.vae.state_dict(), vae_state_file)
 
     def _get_optimizers(self, **kwargs):
         raise NotImplemented()
@@ -92,7 +92,7 @@ class UNET(object):
         run_path = os.path.join(self.experiment_path, run_id)
         artifacts_path = os.path.join(run_path, "artifacts")
         model_path = os.path.join(run_path, "model")
-        self.unet.train()
+        self.vae.train()
 
         os.makedirs(artifacts_path, exist_ok=True)
         os.makedirs(model_path, exist_ok=True)
@@ -109,7 +109,7 @@ class UNET(object):
                 input_imgs = Variable(imgs[:, :self.nin_channel, ...].type(self.Tensor))
                 labels = Variable(imgs[:, self.nin_channel:, ...].type(self.Tensor))
                 opt.zero_grad()
-                gen_imgs = self.unet(input_imgs)
+                gen_imgs = self.vae(input_imgs)
 
                 # Adversarial loss
                 loss = self._eval_loss(gen_imgs, labels, **kwargs)
@@ -142,18 +142,18 @@ class UNET(object):
     def generate_samples(self, input_imgs, concat=False, train=False):
         if input_imgs.ndim == 3: input_imgs = input_imgs[np.newaxis, ...]
         if not train:
-            self.unet.eval()
+            self.vae.eval()
         else:
-            self.unet.train()
+            self.vae.train()
         input_imgs = Variable(self.Tensor(input_imgs[:, :self.nin_channel, ...]))
-        ret = self.unet(input_imgs).detach()
+        ret = self.vae(input_imgs).detach()
         if concat:
             ret = torch.cat((input_imgs, ret), 1)
         return ret
 
-class ResUNET(UNET):
+class ResVAE(VAE):
     def __init__(self, identifier, shape, activation=[nn.Tanh()], nin_channel=3, nout_channel=3, nconv_layer=2,
-                 nthresh_layer=1, ncov_fc=64, identity=False, sharpen=0, output_path=None, experiment_path=None, cuda=False, ngpu=1, beta_sl1=0.0025):
+                 nthresh_layer=1, ncov_fc=64, output_path=None, experiment_path=None, cuda=False, ngpu=1, beta_sl1=0.0025):
         super().__init__(identifier, shape, nin_channel=nin_channel, nout_channel=nout_channel, output_path=output_path, experiment_path=experiment_path,
                  cuda=cuda, ngpu=ngpu)
         self.beta_sl1 = beta_sl1
@@ -163,29 +163,16 @@ class ResUNET(UNET):
         else:
             self.loss_function = nn.SmoothL1Loss(beta=beta_sl1).to(device=self.device)
         
-        self.unet = model.ResUNET_Generator(shape, nconv_layer=nconv_layer, nconv_fc=ncov_fc, ngpu=ngpu,
+        self.vae = model.ResVAE_Generator(shape, nconv_layer=nconv_layer, nconv_fc=ncov_fc, ngpu=ngpu,
                   activation=activation, nin_channel=nin_channel, nout_channel=nout_channel,
-                 nthresh_layer=nthresh_layer, identity=identity).to(device=self.device)
-        self.unet.apply(self._weights_init_normal)
-        self.sharpen = sharpen
-        self.sharpen_kernel = None
-        if self.sharpen>0:
-            sharpen_kernel =  np.empty((nout_channel,1,3,3), dtype=np.float32)
-            I = np.array([[0,0,0], [0,1,0], [0,0,0]])
-            S = np.array([[0,-1,0], [-1,4,-1], [0,-1,0]])
-            sharpen_kernel[:,:,...] = I+self.sharpen*S
-            self.sharpen_kernel = self.Tensor(sharpen_kernel) 
-
-        self.model_params["sharpen"] = sharpen
+                 nthresh_layer=nthresh_layer).to(device=self.device)
+        self.vae.apply(self._weights_init_normal)
         self.model_params["beta_sl1"] = beta_sl1
     def _get_optimizers(self, **kwargs):
         lr, betas = kwargs['lr'], kwargs["betas"]
-        return torch.optim.Adam(self.unet.parameters(), lr=lr, betas=betas)
+        return torch.optim.Adam(self.vae.parameters(), lr=lr, betas=betas)
 
     def _eval_loss(self, gen_imgs, labels, **kwargs):
-        if self.sharpen>0:
-            gen_imgs = torch.nn.functional.conv2d(gen_imgs, weight=self.sharpen_kernel, stride=1, padding=1, groups=self.nout_channel)
-            labels = torch.nn.functional.conv2d(labels, weight=self.sharpen_kernel, stride=1, padding=1, groups=self.nout_channel)
        
         if self.beta_sl1 <= 0:
             assert("lambda_l1" in kwargs or "lambda_l2" in kwargs) 

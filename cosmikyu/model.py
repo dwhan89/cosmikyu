@@ -491,7 +491,6 @@ class ResUNET_Generator(nn.Module):
 
         nconv_lc = nconv_fc * self.stride ** (self.nconv_layer - 1)
         ## define down layers
-        
         self.model_dict["down0"] = ResUNetBlock(self.nin_channel, nconv_fc, outermost=True, stride=1,
                                             kernal_size=self.kernal_size,
                                             padding=self.padding, ngpu=ngpu)
@@ -540,10 +539,29 @@ class ResUNET_Generator(nn.Module):
             model_key = "up%d" % (i)
             ret_up = self.model_dict[f"{model_key}_int"](ret_up,  ret[skip_key] if skip_key in ret else None)
             ret_up = self.model_dict[model_key](ret_up)
+        ## fix this
         ret_up = ret_up if "final" not in self.model_dict else self.model_dict["final"](ret_up)
-        ret_up = ret_up if not self.identity else ret_up+img
-        return ret_up
 
+        #return ret_up if not self.identity else ret_up+img[:,:self.nout_channel,...]
+        '''
+        if self.identity:
+            ret_final = img.clone() 
+            ret_final[:,[0],...] += ret_up[:,[0],...]
+            ret_final.requires_grad_(True)
+        else:
+            ret_final = ret_up
+        return ret_final
+    
+        return ret_final
+        '''
+
+        if self.identity:
+            ret = ret_up.clone() 
+            ret[:,[0],...] += img[:,[0],...]
+        else:
+            ret = ret_up
+            
+        return ret
 
 class VAEGAN_Generator(nn.Module):
     def __init__(self, shape, nconv_layer=2, nconv_fc=32, ngpu=1, kernal_size=5, stride=2, padding=2,
@@ -643,7 +661,7 @@ class VAEGAN_Generator(nn.Module):
             ret_up = self.model_dict[model_key](ret_up, None)
         ret_up = ret_up if "LF" not in self.model_dict else self.model_dict["LF"](ret_up)
 
-        if "input_deact" in self.model_dict:
+        if "input_deact" in self.model_dict and False:
             img_deact = self.model_dict["input_deact"](img)
             ret_up = ret_up + img_deact
             ret_up = ret_up if "final" not in self.model_dict else self.model_dict["final"](ret_up)
@@ -652,3 +670,79 @@ class VAEGAN_Generator(nn.Module):
             ret_up = ret_up + img
 
         return ret_up
+
+
+class ResVAE_Generator(nn.Module):
+    def __init__(self, shape, nconv_layer=2, nconv_fc=64, ngpu=1,
+                  activation=None, nin_channel=3, nout_channel=3,
+                 nthresh_layer=1):
+        super().__init__()
+        self.shape = shape
+        self.nconv_layer = nconv_layer
+        self.normalize = True
+        self.ngpu = ngpu
+        self.nconv_fc = nconv_fc
+        self.kernal_size = 3
+        self.stride = 2
+        self.padding = 1
+        self.output_padding =1
+        self.ds_size = shape[-1] // self.stride ** self.nconv_layer
+        self.activation = activation
+        self.model_dict = nn.ModuleDict()
+        self.nin_channel = nin_channel
+        self.nout_channel = nout_channel
+        self.nthresh_layer = 1
+        self.ntotal_layer = nconv_layer
+        #self.identity = identity
+
+        nconv_lc = nconv_fc * self.stride ** (self.nconv_layer - 1)
+        ## define down layers
+        self.model_dict["down0"] = ResUNetBlock(self.nin_channel, nconv_fc, outermost=True, stride=1,
+                                            kernal_size=self.kernal_size,
+                                            padding=self.padding, ngpu=ngpu)
+        for i in range(1, self.nconv_layer):
+            self.model_dict["down%d" % (i)] = ResUNetBlock(self.nconv_fc * self.stride ** (i - 1), 
+                                                       self.nconv_fc * self.stride ** i, outermost=False, stride=2,
+                                                       kernal_size=self.kernal_size,
+                                                       padding=self.padding, ngpu=ngpu)
+      
+        ## bottom bridge
+        for i in range(self.nthresh_layer):
+            down_idx = "bridge"
+            self.model_dict[down_idx] = ResUNetBlock(nconv_lc, nconv_lc*2, outermost=False, stride=2,
+                                                 kernal_size=self.kernal_size, padding=self.padding, ngpu=ngpu)
+
+        ## up layers
+
+        for i in range(self.nconv_layer + 1):
+            nin_filters = int(nconv_lc * self.stride ** (-i + 1))
+            nout_filters = int(nconv_lc * self.stride ** (-i))
+            self.model_dict["up%d_int" % (i)] = ResUNetUPInterface(nin_filters, nout_filters,
+                    kernal_size=self.kernal_size, padding=self.padding, output_padding=self.output_padding, ngpu=ngpu)
+            self.model_dict["up%d" % (i)] = ResUNetBlock(nout_filters,
+                                                                        nout_filters,
+                                                                        outermost=False,
+                                                                        stride=1,
+                                                                        kernal_size=self.kernal_size,
+                                                                        padding=self.padding,
+                                                                        ngpu=ngpu)
+        final = [nn.Conv2d(nout_filters*2, nout_channel, 1, stride=1, padding=0)]
+        if self.activation is not None:
+            final = final+self.activation    
+        self.model_dict["final"] = nn.Sequential(*final)
+
+    def forward(self, img):
+        ret = img
+        for i in range(self.nconv_layer):
+            model_key = "down%d" % (i)
+            ret = self.model_dict[model_key](ret)
+        ret = self.model_dict['bridge'](ret)
+
+        for i in range(self.nconv_layer):
+            model_key = "up%d" % (i)
+            ret = self.model_dict[f"{model_key}_int"](ret, None)
+            ret = self.model_dict[model_key](ret)
+        ## fix this
+        ret = ret if "final" not in self.model_dict else self.model_dict["final"](ret)
+
+        return ret

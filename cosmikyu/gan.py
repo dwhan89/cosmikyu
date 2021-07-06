@@ -11,7 +11,8 @@ from torchvision.utils import save_image
 
 from cosmikyu import config
 from cosmikyu.model import DCGAN_SIMPLE_Generator, DCGAN_SIMPLE_Discriminator, DCGAN_Generator, DCGAN_Discriminator, \
-    WGAN_Generator, WGAN_Discriminator, UNET_Generator, UNET_Discriminator, UNET_Discriminator_WGP, VAEGAN_Generator, ResUNET_Generator
+    WGAN_Generator, WGAN_Discriminator, UNET_Generator, UNET_Discriminator, UNET_Discriminator_WGP, VAEGAN_Generator, \
+    ResUNET_Generator
 
 
 class GAN(object):
@@ -410,6 +411,7 @@ class PIXGAN(DCGAN_SIMPLE):
         # self.adversarial_loss = nn.BCELoss().to(device=self.device)
         self.adversarial_loss = nn.BCEWithLogitsLoss().to(device=self.device)
         # self.l1_loss = torch.nn.L1Loss().to(device=self.device)  # nn.MSELoss().to(device=self.device)
+
     def _eval_generator_loss(self, real_imgs, gen_imgs, **kwargs):
         gen_disc = self.discriminator(gen_imgs)
         valid = Variable(self.Tensor(gen_disc.shape).fill_(1.0), requires_grad=False)
@@ -549,18 +551,18 @@ class PIXGAN_WGP(PIXGAN):
         # Initialize weights
         self.discriminator.apply(self._weights_init_normal)
         self.l2_loss = torch.nn.MSELoss(reduction="mean").to(device=self.device)
+
     def _eval_generator_loss(self, real_imgs, gen_imgs, **kwargs):
         if kwargs['lambda_l1'] != 0:
             real_ps = torch.var(real_imgs, dim=[-1, -2])
             gen_ps = torch.var(gen_imgs, dim=[-1, -2])
             # real_ps = torch.mean(torch.mean(real_imgs**2, dim=-1), dim=-1)
             # gen_ps = torch.mean(torch.mean(gen_imgs**2, dim=-1), dim=-1)
-            loss = loss + kwargs["lambda_l1"] * self.l1_loss(real_ps, gen_ps)
-        if kwargs['lambda_l2'] != 0 and kwargs["epoch"] <15:
+        if kwargs['lambda_l2'] != 0 and kwargs["epoch"] < 15:
             loss = kwargs["lambda_l2"] * self.l2_loss(real_imgs, gen_imgs)
         else:
             loss = -torch.mean(self.discriminator(gen_imgs))
-     
+        loss = loss + kwargs["lambda_l1"] * self.l1_loss(real_ps, gen_ps)
         return loss
 
     def _eval_discriminator_loss(self, real_imgs, gen_imgs, **kwargs):
@@ -592,8 +594,10 @@ class PIXGAN_WGP(PIXGAN):
         return super().train(dataloader, nepochs=nepochs, ncritics=ncritics, sample_interval=sample_interval,
                              save_interval=save_interval, load_states=load_states, save_states=save_states,
                              verbose=verbose,
-                             mlflow_run=mlflow_run, lr=lr, betas=betas, lambda_gp=lambda_gp, lambda_l1=lambda_l1, lambda_l2=lambda_l2,
+                             mlflow_run=mlflow_run, lr=lr, betas=betas, lambda_gp=lambda_gp, lambda_l1=lambda_l1,
+                             lambda_l2=lambda_l2,
                              disc_conditional=disc_conditional)
+
 
 class ResUNET_WGP(PIXGAN_WGP):
     def __init__(self, identifier, shape, output_path=None, experiment_path=None, cuda=False, ngpu=1,
@@ -601,21 +605,23 @@ class ResUNET_WGP(PIXGAN_WGP):
                  padding=2, output_padding=1, gen_act=nn.Tanh(), nin_channel=3, nout_channel=3, nthresh_layer_gen=1,
                  nthresh_layer_disc=1, identity=False):
         super().__init__(identifier, shape, output_path=output_path, experiment_path=experiment_path, cuda=cuda,
-                         ngpu=ngpu, nconv_layer_gen=nconv_layer_gen, nconv_layer_disc=nconv_layer_disc, nconv_fcgen=nconv_fcgen,
-                         nconv_fcdis=nconv_fcdis, kernal_size=kernal_size, stride=stride, padding=padding, output_padding=output_padding,
-                         gen_act=gen_act, nin_channel=nin_channel, nout_channel=nout_channel, nthresh_layer_gen=nthresh_layer_gen,
+                         ngpu=ngpu, nconv_layer_gen=nconv_layer_gen, nconv_layer_disc=nconv_layer_disc,
+                         nconv_fcgen=nconv_fcgen,
+                         nconv_fcdis=nconv_fcdis, kernal_size=kernal_size, stride=stride, padding=padding,
+                         output_padding=output_padding,
+                         gen_act=gen_act, nin_channel=nin_channel, nout_channel=nout_channel,
+                         nthresh_layer_gen=nthresh_layer_gen,
                          nthresh_layer_disc=nthresh_layer_disc, dropout_rate=0)
         del self.generator
-        self.identity = identity 
+        self.identity = identity
         self.generator = ResUNET_Generator(shape, nconv_layer=self.nconv_layer_gen, nconv_fc=self.nconv_fcgen,
-                                        ngpu=self.ngpu,
-                                        activation=gen_act, nin_channel=self.nin_channel,
-                                        nout_channel=self.nout_channel,
-                                        nthresh_layer=nthresh_layer_gen, identity=identity).to(device=self.device)
+                                           ngpu=self.ngpu,
+                                           activation=gen_act, nin_channel=self.nin_channel,
+                                           nout_channel=self.nout_channel,
+                                           nthresh_layer=nthresh_layer_gen, identity=identity).to(device=self.device)
         self.model_params.update({"identity": identity})
         # Initialize weights
         self.generator.apply(self._weights_init_normal)
-
 
 
 class VAEGAN(PIXGAN):
@@ -743,7 +749,6 @@ class DCGAN_WGP(DCGAN):
         super().train(dataloader, nepochs=nepochs, ncritics=ncritics, sample_interval=sample_interval,
                       save_interval=save_interval, load_states=load_states, save_states=save_states, verbose=verbose,
                       mlflow_run=mlflow_run, lr=lr, betas=betas, lambda_gp=lambda_gp, lambda_l1=lambda_l1)
-
 
 
 class COSMOGAN(DCGAN):

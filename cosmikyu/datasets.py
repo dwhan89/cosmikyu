@@ -47,37 +47,42 @@ class SehgalDataSet(Dataset):
             data = transform(data)
         return [data, 0] if self.dummy_label else data
 
+
 class CombiendDataSet(Dataset):
-    def __init__(self, dataset_root, cmb_identifier, fg_identifier, fg_idxes=[1,2,3,4], transforms=[], dummy_label=False, dtype=np.float64,
+    def __init__(self, dataset_root, cmb_identifier, fg_identifier, fg_idxes=[1, 2, 3, 4], transforms=[],
+                 dummy_label=False, dtype=np.float64,
                  shape=(3, 128, 128), subset=None):
-        self.cmb_dataset = SehgalDataSet(dataset_root, cmb_identifier, [], dummy_label=False, dtype=np.float32, shape=(3,128,128), subset=None)
-        self.fg_dataset = SehgalDataSet(dataset_root, fg_identifier, [], dummy_label=False, dtype=np.float64, shape=(5,128,128), subset=None)
-        assert(len(self.cmb_dataset) == len(self.fg_dataset)) 
-        
-        self.fg_idxes= fg_idxes 
+        self.cmb_dataset = SehgalDataSet(dataset_root, cmb_identifier, [], dummy_label=False, dtype=np.float32,
+                                         shape=(3, 128, 128), subset=None)
+        self.fg_dataset = SehgalDataSet(dataset_root, fg_identifier, [], dummy_label=False, dtype=np.float64,
+                                        shape=(5, 128, 128), subset=None)
+        assert (len(self.cmb_dataset) == len(self.fg_dataset))
+
+        self.fg_idxes = fg_idxes
         self.transforms = transforms
         self.dummy_label = dummy_label
-        self.dtype = dtype 
+        self.dtype = dtype
         self.shape = shape
         self.subset = subset
 
     def __len__(self):
-        return len(self.subset) if self.subset is not None and len(self.subset) < len(self.cmb_dataset) else len(self.cmb_dataset)
+        return len(self.subset) if self.subset is not None and len(self.subset) < len(self.cmb_dataset) else len(
+            self.cmb_dataset)
 
     def __getitem__(self, idx):
         cidx = self.subset[idx] if self.subset is not None else idx
-        data = self.cmb_dataset[cidx] 
+        data = self.cmb_dataset[cidx]
 
-        data[0] += np.sum( self.fg_dataset[cidx][self.fg_idxes,...], axis=0)
+        data[0] += np.sum(self.fg_dataset[cidx][self.fg_idxes, ...], axis=0)
 
         for transform in self.transforms:
             data = transform(data)
         return [data, 0] if self.dummy_label else data
 
 
-
 class DataSetJoiner(Dataset):
-    def __init__(self, datasets=[], dummy_label=False, dtype=np.float64, shape=(10, 128, 128), shuffle=True, transforms=[]):
+    def __init__(self, datasets=[], dummy_label=False, dtype=np.float64, shape=(10, 128, 128), shuffle=True,
+                 transforms=[]):
         assert (len(datasets) > 0)
         self.nsample = len(datasets[0])
         for db in datasets:

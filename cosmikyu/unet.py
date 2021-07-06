@@ -7,7 +7,9 @@ import torch
 import torch.nn as nn
 from torch.autograd import Variable
 from torchvision.utils import save_image
+
 from cosmikyu import config, model
+
 
 class UNET(object):
     def __init__(self, identifier, shape, nin_channel, nout_channel, output_path=None, experiment_path=None,
@@ -34,7 +36,6 @@ class UNET(object):
 
         self.model_params = {"shape": shape, "sampler": "normal"}
         self.Tensor = torch.cuda.FloatTensor if self.cuda else torch.FloatTensor
-
 
     def load_states(self, output_path, postfix="", mlflow_run=None):
         saving_point_tracker_file = os.path.join(output_path, "saving_point.txt")
@@ -121,13 +122,13 @@ class UNET(object):
                           % (epoch, nepochs, batches_done % len(dataloader), len(dataloader), loss.item())
                           )
                 if batches_done % sample_interval == 0 and False:
-                    #temp = torch.cat((input_imgs.data[:1, ...], labels.data[:1, ...], gen_imgs[:1,...].data), 0)
-                    #temp = torch.cat((temp[:1, ...].data, gen_imgs[:1,...].data), 0) 
-                    #temp = torch.cat((labels.data[:1, ...], (input_imgs.data[:1,0,...]-labels.data[:1,...]),
+                    # temp = torch.cat((input_imgs.data[:1, ...], labels.data[:1, ...], gen_imgs[:1,...].data), 0)
+                    # temp = torch.cat((temp[:1, ...].data, gen_imgs[:1,...].data), 0)
+                    # temp = torch.cat((labels.data[:1, ...], (input_imgs.data[:1,0,...]-labels.data[:1,...]),
                     #    gen_imgs[:1,...].data,  (gen_imgs.data[:1,...]-input_imgs.data.data[:1,0,...])), 0) 
-                    temp = torch.cat(((input_imgs.data[:1,0,...]-labels.data[:1,...]),
-                        (input_imgs.data[:1,0,...]-gen_imgs.data.data[:1,...])), 0)
-                    
+                    temp = torch.cat(((input_imgs.data[:1, 0, ...] - labels.data[:1, ...]),
+                                      (input_imgs.data[:1, 0, ...] - gen_imgs.data.data[:1, ...])), 0)
+
                     save_image(temp, os.path.join(artifacts_path, "%d.png" % batches_done), normalize=True,
                                nrow=int(temp.shape[0]))
                 batches_done += 1
@@ -151,49 +152,55 @@ class UNET(object):
             ret = torch.cat((input_imgs, ret), 1)
         return ret
 
+
 class ResUNET(UNET):
     def __init__(self, identifier, shape, activation=[nn.Tanh()], nin_channel=3, nout_channel=3, nconv_layer=2,
-                 nthresh_layer=1, ncov_fc=64, identity=False, sharpen=0, output_path=None, experiment_path=None, cuda=False, ngpu=1, beta_sl1=0.0025):
-        super().__init__(identifier, shape, nin_channel=nin_channel, nout_channel=nout_channel, output_path=output_path, experiment_path=experiment_path,
-                 cuda=cuda, ngpu=ngpu)
+                 nthresh_layer=1, ncov_fc=64, identity=False, sharpen=0, output_path=None, experiment_path=None,
+                 cuda=False, ngpu=1, beta_sl1=0.0025):
+        super().__init__(identifier, shape, nin_channel=nin_channel, nout_channel=nout_channel, output_path=output_path,
+                         experiment_path=experiment_path,
+                         cuda=cuda, ngpu=ngpu)
         self.beta_sl1 = beta_sl1
-        if beta_sl1  <= 0:
+        if beta_sl1 <= 0:
             self.l1_loss_function = nn.L1Loss().to(device=self.device)
             self.l2_loss_function = nn.MSELoss().to(device=self.device)
         else:
             self.loss_function = nn.SmoothL1Loss(beta=beta_sl1).to(device=self.device)
-        
+
         self.unet = model.ResUNET_Generator(shape, nconv_layer=nconv_layer, nconv_fc=ncov_fc, ngpu=ngpu,
-                  activation=activation, nin_channel=nin_channel, nout_channel=nout_channel,
-                 nthresh_layer=nthresh_layer, identity=identity).to(device=self.device)
+                                            activation=activation, nin_channel=nin_channel, nout_channel=nout_channel,
+                                            nthresh_layer=nthresh_layer, identity=identity).to(device=self.device)
         self.unet.apply(self._weights_init_normal)
         self.sharpen = sharpen
         self.sharpen_kernel = None
-        if self.sharpen>0:
-            sharpen_kernel =  np.empty((nout_channel,1,3,3), dtype=np.float32)
-            I = np.array([[0,0,0], [0,1,0], [0,0,0]])
-            S = np.array([[0,-1,0], [-1,4,-1], [0,-1,0]])
-            sharpen_kernel[:,:,...] = I+self.sharpen*S
-            self.sharpen_kernel = self.Tensor(sharpen_kernel) 
+        if self.sharpen > 0:
+            sharpen_kernel = np.empty((nout_channel, 1, 3, 3), dtype=np.float32)
+            I = np.array([[0, 0, 0], [0, 1, 0], [0, 0, 0]])
+            S = np.array([[0, -1, 0], [-1, 4, -1], [0, -1, 0]])
+            sharpen_kernel[:, :, ...] = I + self.sharpen * S
+            self.sharpen_kernel = self.Tensor(sharpen_kernel)
 
         self.model_params["sharpen"] = sharpen
         self.model_params["beta_sl1"] = beta_sl1
+
     def _get_optimizers(self, **kwargs):
         lr, betas = kwargs['lr'], kwargs["betas"]
         return torch.optim.Adam(self.unet.parameters(), lr=lr, betas=betas)
 
     def _eval_loss(self, gen_imgs, labels, **kwargs):
-        if self.sharpen>0:
-            gen_imgs = torch.nn.functional.conv2d(gen_imgs, weight=self.sharpen_kernel, stride=1, padding=1, groups=self.nout_channel)
-            labels = torch.nn.functional.conv2d(labels, weight=self.sharpen_kernel, stride=1, padding=1, groups=self.nout_channel)
-       
+        if self.sharpen > 0:
+            gen_imgs = torch.nn.functional.conv2d(gen_imgs, weight=self.sharpen_kernel, stride=1, padding=1,
+                                                  groups=self.nout_channel)
+            labels = torch.nn.functional.conv2d(labels, weight=self.sharpen_kernel, stride=1, padding=1,
+                                                groups=self.nout_channel)
+
         if self.beta_sl1 <= 0:
-            assert("lambda_l1" in kwargs or "lambda_l2" in kwargs) 
+            assert ("lambda_l1" in kwargs or "lambda_l2" in kwargs)
             loss = 0
             if kwargs["lambda_l1"] > 0:
-                loss += self.l1_loss_function(gen_imgs, labels)*kwargs["lambda_l1"]
+                loss += self.l1_loss_function(gen_imgs, labels) * kwargs["lambda_l1"]
             if kwargs["lambda_l2"] > 0:
-                loss += self.l2_loss_function(gen_imgs, labels)*kwargs["lambda_l2"]
+                loss += self.l2_loss_function(gen_imgs, labels) * kwargs["lambda_l2"]
         else:
             loss = self.loss_function(gen_imgs, labels)
         return loss
@@ -202,7 +209,6 @@ class ResUNET(UNET):
               save_interval=10000, load_states=True, save_states=True, verbose=True, mlflow_run=None,
               lambda_l1=1, lambda_l2=1, **kwargs):
         super().train(dataloader=dataloader, nepochs=nepochs, sample_interval=sample_interval,
-              save_interval=save_interval, load_states=load_states, save_states=save_states, verbose=verbose, mlflow_run=mlflow_run,
-              lambda_l1=lambda_l1, lambda_l2=lambda_l2, **kwargs)
-
-
+                      save_interval=save_interval, load_states=load_states, save_states=save_states, verbose=verbose,
+                      mlflow_run=mlflow_run,
+                      lambda_l1=lambda_l1, lambda_l2=lambda_l2, **kwargs)

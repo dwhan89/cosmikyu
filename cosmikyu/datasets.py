@@ -80,6 +80,36 @@ class CombiendDataSet(Dataset):
         return [data, 0] if self.dummy_label else data
 
 
+class SmoothedCMB(Dataset):
+    def __init__(self, dataset_root, cmb_raw_identifier, cmb_smoothed_identifier, transforms=[],
+                 dummy_label=False, dtype=np.float64, shape=(6, 128, 128), subset=None):
+
+        self.smoothed_dataset = SehgalDataSet(dataset_root, cmb_smoothed_identifier, [], dummy_label=False, dtype=np.float32,
+                                        shape=(3, 128, 128), subset=None)
+        self.raw_dataset = SehgalDataSet(dataset_root, cmb_raw_identifier, [], dummy_label=False, dtype=np.float32,
+                                         shape=(3, 128, 128), subset=None)
+        assert (len(self.raw_dataset) == len(self.smoothed_dataset))
+
+        self.transforms = transforms
+        self.dummy_label = dummy_label
+        self.dtype = dtype
+        self.shape = shape
+        self.subset = subset
+
+    def __len__(self):
+        return len(self.subset) if self.subset is not None and len(self.subset) < len(self.raw_dataset) else len(
+            self.raw_dataset)
+
+    def __getitem__(self, idx):
+        cidx = self.subset[idx] if self.subset is not None else idx
+        data = np.zeros(self.shape, dtype=self.dtype)
+        data[:3,...] = self.smoothed_dataset[cidx]
+        data[3:,...] = self.raw_dataset[cidx] - data[:3,...]
+
+        for transform in self.transforms:
+            data = transform(data)
+        return [data, 0] if self.dummy_label else data
+
 class DataSetJoiner(Dataset):
     def __init__(self, datasets=[], dummy_label=False, dtype=np.float64, shape=(10, 128, 128), shuffle=True,
                  transforms=[]):

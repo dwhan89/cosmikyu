@@ -48,6 +48,7 @@ class SehgalDataResnetUnnormalizer(object):
 class SehgalDataNormalizerScaledLogZShrink(object):
     def __init__(self, normalization_info_file, channel_idxes=["kappa", "ksz", "tsz", "ir_pts", "rad_pts"],
                  log_norm_idxes=[2, 3, 4]):
+        
         temp = np.load(normalization_info_file, allow_pickle=True)
         self.norm_info = {key: temp[key].item() for key in temp}
         self.channel_idxes = channel_idxes
@@ -74,6 +75,7 @@ class SehgalDataNormalizerScaledLogZShrink(object):
     def __call__(self, sample):
         assert (len(sample.shape) == 3)
         for i in range(self.nchannel):
+            
             sample[i] = self.log_normalizers[i](sample[i, ...])
             sample[i] = self.z_normalizers[i](sample[i, ...])
             sample[i] = self.mult_normalizers[i](sample[i, ...])
@@ -334,6 +336,16 @@ class RandomFlips(object):
             sample = np.flip(sample, -2)
         if temp[1] < self.p_h:
             sample = np.flip(sample, -1)
+        return sample
+
+
+class MeanSub(object):
+    def __init__(self, idxes):
+        self.idxes = idxes
+
+    def __call__(self, sample):
+        for i in self.idxes:
+            sample[i] -= np.mean(sample[i])
         return sample
 
 

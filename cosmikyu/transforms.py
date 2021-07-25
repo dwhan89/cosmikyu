@@ -73,7 +73,7 @@ class SehgalDataNormalizerScaledLogZShrink(object):
             self.mult_normalizers[i] = Multiply(1. / shrink_fact)
 
     def __call__(self, sample):
-        assert (len(sample.shape) == 3)
+        #assert (len(sample.shape) == 3)
         for i in range(self.nchannel):
             
             sample[i] = self.log_normalizers[i](sample[i, ...])
@@ -425,8 +425,13 @@ class ToScaledLogScale(object):
 
     def __call__(self, sample):
         loc = sample >= 0
-        sample[loc] = np.log(sample[loc] / self.scaling + 1.)
-        sample[~loc] = -1 * np.log(np.abs(sample[~loc] / self.scaling) + 1.)
+        try:
+            sample[loc] = np.log(sample[loc] / self.scaling + 1.)
+            sample[~loc] = -1 * np.log(np.abs(sample[~loc] / self.scaling) + 1.)
+        except:
+            print(sample.shape)
+            sample[loc] = torch.log(sample[loc] / self.scaling + 1.)
+            sample[~loc] = -1 * torch.log(torch.abs(sample[~loc] / self.scaling) + 1.)
         return sample
 
 

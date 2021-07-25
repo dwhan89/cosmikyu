@@ -12,7 +12,7 @@ from torchvision.utils import save_image
 from cosmikyu import config
 from cosmikyu.model import DCGAN_SIMPLE_Generator, DCGAN_SIMPLE_Discriminator, DCGAN_Generator, DCGAN_Discriminator, \
     WGAN_Generator, WGAN_Discriminator, UNET_Generator, UNET_Discriminator, UNET_Discriminator_WGP, VAEGAN_Generator, \
-    ResUNET_Generator
+    ResUNET_Generator, ResDCGAN_Generator
 
 
 class GAN(object):
@@ -553,16 +553,17 @@ class PIXGAN_WGP(PIXGAN):
         self.l2_loss = torch.nn.MSELoss(reduction="mean").to(device=self.device)
 
     def _eval_generator_loss(self, real_imgs, gen_imgs, **kwargs):
+        if kwargs['lambda_l2'] != 0 and kwargs["epoch"] < 15:
+            loss = kwargs["lambda_l2"] * self.l2_loss(real_imgs, gen_imgs)
+        else:
+            loss = -torch.mean(self.discriminator(gen_imgs))
+        
         if kwargs['lambda_l1'] != 0:
             real_ps = torch.var(real_imgs, dim=[-1, -2])
             gen_ps = torch.var(gen_imgs, dim=[-1, -2])
             # real_ps = torch.mean(torch.mean(real_imgs**2, dim=-1), dim=-1)
             # gen_ps = torch.mean(torch.mean(gen_imgs**2, dim=-1), dim=-1)
-        if kwargs['lambda_l2'] != 0 and kwargs["epoch"] < 15:
-            loss = kwargs["lambda_l2"] * self.l2_loss(real_imgs, gen_imgs)
-        else:
-            loss = -torch.mean(self.discriminator(gen_imgs))
-        loss = loss + kwargs["lambda_l1"] * self.l1_loss(real_ps, gen_ps)
+            loss = loss + kwargs["lambda_l1"] * self.l1_loss(real_ps, gen_ps)
         return loss
 
     def _eval_discriminator_loss(self, real_imgs, gen_imgs, **kwargs):
@@ -751,6 +752,23 @@ class DCGAN_WGP(DCGAN):
                       mlflow_run=mlflow_run, lr=lr, betas=betas, lambda_gp=lambda_gp, lambda_l1=lambda_l1)
 
 
+class ResDCGAN_WGP(DCGAN_WGP):
+    def __init__(self, identifier, shape, latent_dim, output_path=None, experiment_path=None, cuda=False, ngpu=1,
+                 nconv_layer_gen=2, nconv_layer_disc=2, nconv_fcgen=32, nconv_fcdis=32, kernal_size=5, stride=2,
+                 padding=2, output_padding=1, gen_act=nn.Tanh()):
+        super().__init__(identifier=identifier, shape=shape, latent_dim=latent_dim, output_path=output_path, experiment_path=experiment_path,
+                         cuda=cuda, ngpu=ngpu, nconv_layer_gen=nconv_layer_gen, nconv_layer_disc=nconv_layer_disc,
+                         nconv_fcgen=nconv_fcgen, nconv_fcdis=nconv_fcdis, kernal_size=kernal_size, stride=stride,
+                         padding=padding,
+                         output_padding=output_padding, gen_act=gen_act)
+
+        del self.generator, 
+        self.generator = ResDCGAN_Generator(shape, latent_dim=latent_dim, nconv_layer=self.nconv_layer_gen, nconv_fc=self.nconv_fcgen,
+                                                 ngpu=self.ngpu, activation=gen_act, kernal_size=kernal_size, stride=stride,
+                                                 padding=padding, output_padding=output_padding).to(device=self.device)
+
+        # Initialize weights
+        self.generator.apply(self._weights_init_normal)
 class COSMOGAN(DCGAN):
     def __init__(self, identifier, shape, latent_dim, output_path=None, experiment_path=None,
                  cuda=False, nconv_fcgen=64,

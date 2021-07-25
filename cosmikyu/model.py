@@ -525,7 +525,14 @@ class ResUNET_Generator(nn.Module):
             final = final + self.activation
         self.model_dict["final"] = nn.Sequential(*final)
 
-    def forward(self, img):
+    def forward(self, img): 
+        def _forward_wrapper(z, model, ngpu=self.ngpu):
+            if z.is_cuda and ngpu > 0:
+                ret = nn.parallel.data_parallel(model, z, range(ngpu))
+            else:
+                ret = model(z)
+            return ret
+        
         ret = {"down-1": img}
         for i in range(self.nconv_layer):
             input_key = "down%d" % (i - 1)
@@ -540,9 +547,9 @@ class ResUNET_Generator(nn.Module):
             ret_up = self.model_dict[f"{model_key}_int"](ret_up, ret[skip_key] if skip_key in ret else None)
             ret_up = self.model_dict[model_key](ret_up)
         ## fix this
-        ret_up = ret_up if "final" not in self.model_dict else self.model_dict["final"](ret_up)
+        ret_up = ret_up if "final" not in self.model_dict else _forward_wrapper(ret_up, self.model_dict["final"])
 
-        # return ret_up if not self.identity else ret_up+img[:,:self.nout_channel,...]
+        return ret_up if not self.identity else ret_up+img[:,:self.nin_channel,...]
         '''
         if self.identity:
             ret_final = img.clone() 
@@ -553,7 +560,6 @@ class ResUNET_Generator(nn.Module):
         return ret_final
     
         return ret_final
-        '''
 
         if self.identity:
             ret = ret_up.clone()
@@ -561,8 +567,177 @@ class ResUNET_Generator(nn.Module):
         else:
             ret = ret_up
 
-        return ret
+        '''
+        
 
+        #return ret
+
+class ResDCGAN_Generator(nn.Module):
+    def __init__(self, shape, latent_dim, nconv_layer=2, nconv_fc=32, ngpu=1, kernal_size=5, stride=2, padding=2,
+                 output_padding=1, activation=None):
+        super().__init__()
+
+        self.shape = shape
+        self.nconv_layer = nconv_layer
+        self.latent_dim = latent_dim
+        self.ngpu = ngpu
+        self.nconv_fc = nconv_fc
+        self.kernal_size = kernal_size
+        self.stride = stride
+        self.padding = padding
+        self.output_padding = output_padding
+        self.ds_size = shape[-1] // self.stride ** self.nconv_layer
+        self.activation = activation
+        nconv_lc = nconv_fc * self.stride ** (self.nconv_layer - 1)
+        self.model_dict = nn.ModuleDict()
+
+        def _get_conv_layers(nconv_layer, nconv_lc):
+            conv_layers = []
+
+            for i in range(nconv_layer - 1):
+                conv_layers.extend([nn.ConvTranspose2d(nconv_lc // self.stride ** i, nconv_lc // self.stride ** (i + 1),
+                                                       self.kernal_size, stride=self.stride, padding=self.padding,
+                                                       output_padding=self.output_padding),
+                                    nn.BatchNorm2d(nconv_lc // self.stride ** (i + 1)),
+                                    nn.LeakyReLU(0.2, inplace=True)])
+            return conv_layers
+
+        init_layers = [nn.Linear(self.latent_dim, nconv_lc * self.ds_size ** 2),
+                  cnn.Reshape((nconv_lc, self.ds_size, self.ds_size)),
+                  nn.BatchNorm2d(nconv_lc),
+                  nn.LeakyReLU(0.2, inplace=True)]
+        self.model_dict["init"] = nn.Sequential(*init_layers)
+
+        for i in range(nconv_layer -1):
+            nin_filters = int(nconv_lc // self.stride ** i)
+            nout_filters = int(nconv_lc // self.stride ** (i + 1))
+            self.model_dict["up%d_int" % (i)] = ResUNetUPInterface(nin_filters, nout_filters,
+                                                                   kernal_size=self.kernal_size, padding=self.padding,
+                                                                   output_padding=self.output_padding, ngpu=ngpu)
+            self.model_dict["up%d" % (i)] = ResUNetBlock(nout_filters,
+                                                         nout_filters,
+                                                         outermost=False,
+                                                         stride=1,
+                                                         kernal_size=3,
+                                                         padding=self.padding,
+                                                         ngpu=ngpu, use_leaky=True)
+
+        final_layers = [nn.ConvTranspose2d(self.nconv_fc, self.shape[0], self.kernal_size, stride=self.stride,
+                                          padding=self.padding,
+                                          output_padding=output_padding)]
+        if self.activation is not None:
+            final_layers.extend(self.activation)
+        self.model_dict["final"]  = nn.Sequential(*final_layers)
+
+    def forward(self, z):
+        
+        def _forward_wrapper(z, model, ngpu=self.ngpu):
+            if z.is_cuda and ngpu > 0:
+                ret = nn.parallel.data_parallel(model, z, range(ngpu))
+            else:
+                ret = model(z)
+            return ret
+
+        ret = _forward_wrapper(z, self.model_dict["init"])
+        
+        for i in range(self.nconv_layer -1):
+            model_key = "up%d" % (i)
+            ret = self.model_dict[f"{model_key}_int"](ret, None)
+            ret = self.model_dict[model_key](ret)
+        ## fix this
+        ret = _forward_wrapper(ret, self.model_dict["final"])
+        return ret
+        
+class ResUNET_DCGAN_Generator(nn.Module):
+    def __init__(self, shape, nconv_layer=2, nconv_fc=64, ngpu=1,
+                 activation=None, nin_channel=3, nout_channel=3,
+                 nthresh_layer=1, latent_dim=256):
+        super().__init__()
+        self.shape = shape
+        self.nconv_layer = nconv_layer
+        self.normalize = True
+        self.ngpu = ngpu
+        self.nconv_fc = nconv_fc
+        self.kernal_size = 3
+        self.stride = 2
+        self.padding = 1
+        self.output_padding = 1
+        self.ds_size = shape[-1] // self.stride ** self.nconv_layer
+        self.activation = activation
+        self.model_dict = nn.ModuleDict()
+        self.nin_channel = nin_channel
+        self.nout_channel = nout_channel
+        self.nthresh_layer = 1
+        self.ntotal_layer = nconv_layer
+        self.latent_dim = latent_dim
+
+        nconv_lc = nconv_fc * self.stride ** (self.nconv_layer - 1)
+        ## define down layers
+        init_layers = [nn.Linear(self.latent_dim, self.nin_channel * self.shape[-1] ** 2),
+                  cnn.Reshape((self.nin_channel, self.shape[-1], self.shape[-1])),
+                  nn.BatchNorm2d(self.nin_channel),
+                  nn.LeakyReLU(0.2, inplace=True)]
+        self.model_dict["init"] = nn.Sequential(*init_layers)
+        self.model_dict["down0"] = ResUNetBlock(self.nin_channel, nconv_fc, outermost=True, stride=1,
+                                                kernal_size=self.kernal_size,
+                                                padding=self.padding, ngpu=ngpu, use_leaky=True)
+        for i in range(1, self.nconv_layer):
+            self.model_dict["down%d" % (i)] = ResUNetBlock(self.nconv_fc * self.stride ** (i - 1),
+                                                           self.nconv_fc * self.stride ** i, outermost=False, stride=2,
+                                                           kernal_size=self.kernal_size,
+                                                           padding=self.padding, ngpu=ngpu, use_leaky=True)
+
+        ## bottom bridge
+        for i in range(self.nthresh_layer):
+            down_idx = "bridge"
+            self.model_dict[down_idx] = ResUNetBlock(nconv_lc, nconv_lc * 2, outermost=False, stride=2,
+                                                     kernal_size=self.kernal_size, padding=self.padding, ngpu=ngpu, use_leaky=True)
+
+        ## up layers
+
+        for i in range(self.nconv_layer + 1):
+            nin_filters = int(nconv_lc * self.stride ** (-i + 1))
+            nout_filters = int(nconv_lc * self.stride ** (-i))
+            self.model_dict["up%d_int" % (i)] = ResUNetUPInterface(nin_filters, nout_filters,
+                                                                   kernal_size=self.kernal_size, padding=self.padding,
+                                                                   output_padding=self.output_padding, ngpu=ngpu)
+            self.model_dict["up%d" % (i)] = ResUNetBlock(nout_filters * 2,
+                                                         nout_filters,
+                                                         outermost=False,
+                                                         stride=1,
+                                                         kernal_size=self.kernal_size,
+                                                         padding=self.padding,
+                                                         ngpu=ngpu, use_leaky=True)
+        final = [nn.Conv2d(nout_filters * 2, nout_channel, 1, stride=1, padding=0)]
+        if self.activation is not None:
+            final = final + self.activation
+        self.model_dict["final"] = nn.Sequential(*final)
+
+    def forward(self, z):
+        def _forward_wrapper(z, model, ngpu=self.ngpu):
+            if z.is_cuda and ngpu > 0:
+                ret = nn.parallel.data_parallel(model, z, range(ngpu))
+            else:
+                ret = model(z)
+            return ret
+
+        ret = {"down-1": _forward_wrapper(z, self.model_dict["init"])}
+        for i in range(self.nconv_layer):
+            input_key = "down%d" % (i - 1)
+            model_key = "down%d" % (i)
+            ret[model_key] = self.model_dict[model_key](ret[input_key])
+        ret.pop("down-1")
+        ret_up = self.model_dict['bridge'](ret[model_key])
+
+        for i in range(self.nconv_layer):
+            skip_key = "down%d" % (self.ntotal_layer - 1 - i)
+            model_key = "up%d" % (i)
+            ret_up = self.model_dict[f"{model_key}_int"](ret_up, ret[skip_key] if skip_key in ret else None)
+            ret_up = self.model_dict[model_key](ret_up)
+        ## fix this
+        ret_up = ret_up if "final" not in self.model_dict else _forward_wrapper(ret_up, self.model_dict["final"])
+
+        return ret
 
 class VAEGAN_Generator(nn.Module):
     def __init__(self, shape, nconv_layer=2, nconv_fc=32, ngpu=1, kernal_size=5, stride=2, padding=2,
@@ -661,8 +836,7 @@ class VAEGAN_Generator(nn.Module):
             model_key = "up%d" % (i)
             ret_up = self.model_dict[model_key](ret_up, None)
         ret_up = ret_up if "LF" not in self.model_dict else self.model_dict["LF"](ret_up)
-
-        if "input_deact" in self.model_dict and False:
+        if "input_deact" in self.model_dict:
             img_deact = self.model_dict["input_deact"](img)
             ret_up = ret_up + img_deact
             ret_up = ret_up if "final" not in self.model_dict else self.model_dict["final"](ret_up)

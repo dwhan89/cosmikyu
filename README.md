@@ -36,7 +36,7 @@
   <h3 align="center">Cosmikyu</h3>
 
   <p align="center">
-    Cosmikyu is a software stack to generate full-sky extragalactic foreground simulations of the microwave sky. At its core, cosmikyu include three seperate Generative Adversial Networks (GAN) for (1) data augmentation, (2) image-to-image translation, and (3) image enhancement. Furthermore, it implements utility functions to "touch up" the raw outputs from the GAN networks. Cosmikyu is used to generate results for Han et al 2021 (in prep). For more details, please wait for Han et al 2021 publication.
+Cosmikyu is a software stack to generate full-sky extragalactic foreground simulations of the microwave sky. At its core, cosmikyu includes three separate Generative Adversarial Networks (GAN) for (1) data augmentation, (2) image-to-image translation, and (3) image enhancement. Furthermore, it implements utility functions to "touch up" the raw outputs from the GAN networks. Cosmikyu is used to generate results for Han et al. 2021 (https://arxiv.org/abs/2105.11444)
     <br />
     <a href="https://github.com/dwhan89/cosmikyu"><strong>Explore the docs »</strong></a>
     <br />

@@ -71,22 +71,23 @@ def merge_dict(a, b, path=None, clean=True):
     """
     if path is None: path = []
 
-    for key in b:
-        if key in a:
-            if isinstance(a[key], dict):
-                if isinstance(b[key], dict):
-                    merge_dict(a[key], b[key], path + [str(key)])
-                else:
-                    a[key] = b[key]
-            elif isinstance(a[key], np.ndarray) and np.array_equal(a[key], b[key]):
-                pass
-            elif a[key] == b[key]:
-                pass  # same leaf value
+    if isinstance(a, dict) and isinstance(b, dict):
+        for key in b:
+            if key in a:
+                if isinstance(a[key], dict):
+                    if isinstance(b[key], dict):
+                        merge_dict(a[key], b[key], path + [str(key)])
+                    else:
+                        a[key] = b[key]
             else:
-                raise Exception('Conflict at %s' % '.'.join(path + [str(key)]))
+                a[key] = b[key]
+    else:
+        if isinstance(a[key], np.ndarray) and np.array_equal(a[key], b[key]):
+            pass
+        elif a[key] == b[key]:
+            pass  # same leaf value
         else:
-            a[key] = b[key]
-
+            raise Exception('Conflict at %s' % '.'.join(path + [str(key)]))
     if clean: del b
 
     return a

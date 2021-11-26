@@ -449,8 +449,12 @@ class FromScaledLogScale(object):
 
     def __call__(self, sample):
         loc = sample >= 0
-        sample[loc] = (torch.exp(sample[loc]) - 1.) * self.scaling
-        sample[~loc] = -1 * ((torch.exp(torch.abs(sample[~loc])) - 1.) * self.scaling)
+        try:
+            sample[loc] = (torch.exp(sample[loc]) - 1.) * self.scaling
+            sample[~loc] = -1 * ((torch.exp(torch.abs(sample[~loc])) - 1.) * self.scaling)
+        except:
+            sample[loc] = (np.exp(sample[loc]) - 1.) * self.scaling
+            sample[~loc] = -1 * ((np.exp(np.abs(sample[~loc])) - 1.) * self.scaling)
         return sample
 
 

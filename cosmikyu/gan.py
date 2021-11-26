@@ -552,8 +552,14 @@ class PIXGAN_WGP(PIXGAN):
         self.discriminator.apply(self._weights_init_normal)
         self.l2_loss = torch.nn.MSELoss(reduction="mean").to(device=self.device)
 
+    def _get_optimizers(self, **kwargs):
+        lr, betas = kwargs['lr'], kwargs["betas"]
+        opt_gen = torch.optim.Adam(self.generator.parameters(), lr=lr, betas=betas)
+        opt_disc = torch.optim.Adam(self.discriminator.parameters(), lr=lr, betas=betas)
+        return opt_gen, opt_disc
+    
     def _eval_generator_loss(self, real_imgs, gen_imgs, **kwargs):
-        if kwargs['lambda_l2'] != 0 and kwargs["epoch"] < 15:
+        if kwargs['lambda_l2'] != 0:
             loss = kwargs["lambda_l2"] * self.l2_loss(real_imgs, gen_imgs)
         else:
             loss = -torch.mean(self.discriminator(gen_imgs))
@@ -591,13 +597,13 @@ class PIXGAN_WGP(PIXGAN):
 
     def train(self, dataloader, nepochs=200, ncritics=5, sample_interval=1000,
               save_interval=10000, load_states=True, save_states=True, verbose=True, mlflow_run=None, lr=0.0002,
-              betas=(0.5, 0.999), lambda_gp=10, lambda_l1=100, lambda_l2=1, disc_conditional=True):
+              betas=(0.5, 0.999), lambda_gp=10, lambda_l1=100, lambda_l2=1, disc_conditional=True, **kwargs):
         return super().train(dataloader, nepochs=nepochs, ncritics=ncritics, sample_interval=sample_interval,
                              save_interval=save_interval, load_states=load_states, save_states=save_states,
                              verbose=verbose,
                              mlflow_run=mlflow_run, lr=lr, betas=betas, lambda_gp=lambda_gp, lambda_l1=lambda_l1,
                              lambda_l2=lambda_l2,
-                             disc_conditional=disc_conditional)
+                             disc_conditional=disc_conditional, **kwargs)
 
 
 class ResUNET_WGP(PIXGAN_WGP):
@@ -624,6 +630,11 @@ class ResUNET_WGP(PIXGAN_WGP):
         # Initialize weights
         self.generator.apply(self._weights_init_normal)
 
+    def _get_optimizers(self, **kwargs):
+        lr, betas = kwargs['lr'], kwargs["betas"]
+        opt_gen = torch.optim.Adam(self.generator.parameters(), lr=lr, betas=betas)
+        opt_disc = torch.optim.Adam(self.discriminator.parameters(), lr=lr, betas=betas)
+        return opt_gen, opt_disc
 
 class VAEGAN(PIXGAN):
     def __init__(self, identifier, shape, output_path=None, experiment_path=None, cuda=False, ngpu=1,

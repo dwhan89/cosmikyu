@@ -100,7 +100,7 @@ class STATS(object):
         if collect_data: self.collect_data()
 
         def _collect_subset(data_key, data_idxes):
-            return dict((k, v) for k, v in self.storage[data_key].iteritems() if k in data_idxes)
+            return dict((k, v) for k, v in self.storage[data_key].items() if k in data_idxes)
 
         ret = {}
         if data_key is not None:

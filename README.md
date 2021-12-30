@@ -81,16 +81,44 @@ Cosmikyu is a software stack to generate full-sky extragalactic foreground simul
 
 <!-- ABOUT THE PROJECT -->
 ## About The Project
+<h3 align="center">Schematic of Overall Procedure</h3>
+<p align="center">
+    <img src="images/flowchart.png" alt="schematics" >
+</p>
+<p>Shown is a schematic of the overall procedure to train MillimeterDL network and generate the output maps from the input data. The
+network is represented by the shaded gray box in the center. Our procedure starts with the Primary Input Data consisting
+of 200,000 1
+ x 1
+sq deg. overlapping patches cut out from <a ref=https://arxiv.org/abs/0908.0540>Sehgal et al. 2010 simulations</a>. The pink boxes represent the three major training
+steps described in Section III of <a ref="https://arxiv.org/abs/2105.11444">Han et al. 2021</a> The blue boxes represent inputs into each training step. The dark grey arrows indicate the input
+and output of each step. Once the network training is completed, we feed full-sky Gaussian kappa maps and unlensed CMB
+maps (T, Q, U) into the network (top green box); given these inputs, the network generates the final output products (bottom
+green box), which are full-sky millimeter-wave simulations including lensed T, Q, and U maps, non-Gaussian kappa maps, and
+non-Gaussian extragalactic foregrounds correlated with the kappa map and each other.
+</p>
+
+<h3 align="center">Map Level Comparision</h3>
+<p align="center">
+    <img src="images/fieldcomp.png" alt="fields" >
+</p>
+<p>
+ From top to bottom, shown are the lensing convergence (κ), the kinetic Sunyaev-Zel’dovich effect (kSZ), the thermal
+Sunyaev-Zel’dovich effect (tSZ), and the Cosmic Infrared Background (CIB) maps at 148 GHz from the S10 simulations (left
+column) and from the network (right column). A flux cut of 7 mJy at 148 GHz is applied to the CIB maps. Full-sky maps are
+shown in the Mollweide projection in the background, while center panels show zoom-ins of 1 x 1 sq deg. patches. All maps have the
+units of µK, except for the κ map which is dimensionless. Note that <a ref=https://arxiv.org/abs/0908.0540>Sehgal et al. 2010 simulations</a> are unique for only one octant of the sky;
+on the other hand, the network simulations do not have any repeated tiles.
+</p>
 
 <!--[![Product Name Screen Shot][product-screenshot]](https://example.com)-->
 
 ### Built With
 
-* [Python3](https://www.python.org/)
-* [PyTorch](https://pytorch.org/)
+* [python3](https://www.python.org/)
+* [pyTorch](https://pytorch.org/)
 * [pixell](https://pixell.readthedocs.io/en/latest/)
 * [astropy](https://www.astropy.org/)
-
+* [numpy](https://numpy.org/)
 
 
 <!-- GETTING STARTED -->

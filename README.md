@@ -71,6 +71,7 @@ Cosmikyu is a software stack to generate full-sky extragalactic foreground simul
     <!-- <li><a href="#usage">Usage</a></li> -->
     <li><a href="#roadmap">Roadmap</a></li>
     <li><a href="#contributing">Contributing</a></li>
+    <li><a href="#references">References</a></li>
     <li><a href="#license">License</a></li>
     <li><a href="#contact">Contact</a></li>
     <li><a href="#acknowledgements">Acknowledgements</a></li>
@@ -174,6 +175,51 @@ Contributions are what make the open source community such an amazing place to b
 4. Push to the Branch (`git push origin feature/AmazingFeature`)
 5. Open a Pull Request
 
+<!-- References -->
+## References
+
+
+```bibtex
+@ARTICLE{Han2021,
+       author = {{Han}, Dongwon and {Sehgal}, Neelima and {Villaescusa-Navarro}, Francisco},
+        title = "{Deep learning simulations of the microwave sky}",
+      journal = {\prd},
+     keywords = {Astrophysics - Cosmology and Nongalactic Astrophysics},
+         year = 2021,
+        month = dec,
+       volume = {104},
+       number = {12},
+          eid = {123521},
+        pages = {123521},
+          doi = {10.1103/PhysRevD.104.123521},
+archivePrefix = {arXiv},
+       eprint = {2105.11444},
+ primaryClass = {astro-ph.CO},
+       adsurl = {https://ui.adsabs.harvard.edu/abs/2021PhRvD.104l3521H},
+      adsnote = {Provided by the SAO/NASA Astrophysics Data System}
+}
+```
+
+```bibtex
+@ARTICLE{Sehgal2010,
+       author = {{Sehgal}, Neelima and {Bode}, Paul and {Das}, Sudeep and {Hernandez-Monteagudo}, Carlos and {Huffenberger}, Kevin and {Lin}, Yen-Ting and {Ostriker}, Jeremiah P. and {Trac}, Hy},
+        title = "{Simulations of the Microwave Sky}",
+      journal = {\apj},
+     keywords = {cosmic microwave background, galaxies: clusters: general, galaxies: general, intergalactic medium, large-scale structure of universe, methods: N-body simulations, Astrophysics - Cosmology and Nongalactic Astrophysics, Astrophysics - Instrumentation and Methods for Astrophysics},
+         year = 2010,
+        month = feb,
+       volume = {709},
+       number = {2},
+        pages = {920-936},
+          doi = {10.1088/0004-637X/709/2/920},
+archivePrefix = {arXiv},
+       eprint = {0908.0540},
+ primaryClass = {astro-ph.CO},
+       adsurl = {https://ui.adsabs.harvard.edu/abs/2010ApJ...709..920S},
+      adsnote = {Provided by the SAO/NASA Astrophysics Data System}
+}
+
+```
 
 
 <!-- LICENSE -->
